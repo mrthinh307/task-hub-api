@@ -1,4 +1,4 @@
-# FastAPI Task Hub API
+# FastAPI - Taskhub
 
 A production-ready FastAPI application boilerplate implementing a layered architecture (**Router → Service → Repository → Database**), managed efficiently with **`uv`**.
 
