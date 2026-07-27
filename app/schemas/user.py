@@ -1,11 +1,15 @@
 from datetime import datetime
+from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, EmailStr
+
+from app.core.enums import UserRole
 
 
 class UserBase(BaseModel):
     email: EmailStr
-    username: str
+    full_name: str
+    role: UserRole = UserRole.MEMBER
     is_active: bool = True
 
 
@@ -15,14 +19,14 @@ class UserCreate(UserBase):
 
 class UserUpdate(BaseModel):
     email: EmailStr | None = None
-    username: str | None = None
+    full_name: str | None = None
     password: str | None = None
+    role: UserRole | None = None
     is_active: bool | None = None
 
 
 class UserResponse(UserBase):
-    id: int
-    is_superuser: bool
+    id: UUID
     created_at: datetime
     updated_at: datetime
 
