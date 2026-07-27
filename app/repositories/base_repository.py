@@ -18,7 +18,11 @@ class BaseRepository[
     Handles database interaction only.
     """
 
-    def __init__(self, model: type[ModelType], session: AsyncSession):
+    def __init__(
+        self,
+        model: type[ModelType],
+        session: AsyncSession,
+    ):
         self.model = model
         self.session = session
 
@@ -26,13 +30,20 @@ class BaseRepository[
         """Get a single record by primary key."""
         return await self.session.get(self.model, id)
 
-    async def get_multi(self, skip: int = 0, limit: int = 100) -> Sequence[ModelType]:
+    async def get_multi(
+        self,
+        skip: int = 0,
+        limit: int = 100,
+    ) -> Sequence[ModelType]:
         """Get multiple records with pagination."""
         stmt = select(self.model).offset(skip).limit(limit)
         result = await self.session.execute(stmt)
         return result.scalars().all()
 
-    async def create(self, obj_in: CreateSchemaType | dict[str, Any]) -> ModelType:
+    async def create(
+        self,
+        obj_in: CreateSchemaType | dict[str, Any],
+    ) -> ModelType:
         """Create a new record."""
         if isinstance(obj_in, dict):
             create_data = obj_in
@@ -46,7 +57,9 @@ class BaseRepository[
         return db_obj
 
     async def update(
-        self, db_obj: ModelType, obj_in: UpdateSchemaType | dict[str, Any]
+        self,
+        db_obj: ModelType,
+        obj_in: UpdateSchemaType | dict[str, Any],
     ) -> ModelType:
         """Update an existing record."""
         if isinstance(obj_in, dict):

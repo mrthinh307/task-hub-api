@@ -15,9 +15,3 @@ class UserRepository(BaseRepository[User, UserCreate, UserUpdate]):
         stmt = select(User).where(User.email == email)
         result = await self.session.execute(stmt)
         return result.scalar_one_or_none()
-
-    async def get_by_username(self, username: str) -> User | None:
-        """Fetch user by unique username."""
-        stmt = select(User).where(User.username == username)
-        result = await self.session.execute(stmt)
-        return result.scalar_one_or_none()
