@@ -1,0 +1,17 @@
+# Environments & Secrets
+.env
+.venv/
+venv/
+ENV/
+
+# Python Cache & Artifacts
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# OS specific
+.DS_Store
+Thumbs.db
