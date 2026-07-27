@@ -1,8 +1,10 @@
+from typing import Any
+
 from fastapi import HTTPException, status
 
 
 class EntityNotFoundException(HTTPException):
-    def __init__(self, entity_name: str, entity_id: str | int):
+    def __init__(self, entity_name: str, entity_id: Any):
         super().__init__(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"{entity_name} with id {entity_id} not found.",

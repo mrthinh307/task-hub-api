@@ -1,9 +1,11 @@
-from pydantic import Field
+from urllib.parse import parse_qs, urlencode, urlparse, urlunparse
+
+from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
-    PROJECT_NAME: str = "FastAPI Task Hub API"
+    PROJECT_NAME: str = "FastAPI Taskhub"
     API_V1_STR: str = "/api/v1"
     DEBUG: bool = True
 
@@ -18,6 +20,38 @@ class Settings(BaseSettings):
 
     # Security
     SECRET_KEY: str = "dev-secret-key-change-in-production"
+
+    @field_validator("DATABASE_URL", mode="before")
+    @classmethod
+    def assemble_db_connection(cls, v: str) -> str:
+        if isinstance(v, str):
+            if v.startswith("postgres://"):
+                v = v.replace("postgres://", "postgresql+asyncpg://", 1)
+            elif v.startswith("postgresql://") and not v.startswith(
+                "postgresql+asyncpg://"
+            ):
+                v = v.replace("postgresql://", "postgresql+asyncpg://", 1)
+
+            # Clean query params incompatible with asyncpg (channel_binding, sslmode)
+            parsed = urlparse(v)
+            if parsed.query:
+                query_params = parse_qs(parsed.query)
+                query_params.pop("channel_binding", None)
+                if "sslmode" in query_params:
+                    ssl_val = query_params.pop("sslmode")[0]
+                    if "ssl" not in query_params:
+                        query_params["ssl"] = [ssl_val]
+
+                new_query = urlencode(query_params, doseq=True)
+                v = urlunparse((
+                    parsed.scheme,
+                    parsed.netloc,
+                    parsed.path,
+                    parsed.params,
+                    new_query,
+                    parsed.fragment,
+                ))
+        return v
 
     model_config = SettingsConfigDict(
         env_file=".env", env_file_encoding="utf-8", case_sensitive=True, extra="ignore"
