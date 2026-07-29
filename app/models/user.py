@@ -9,6 +9,7 @@ from app.db.base import Base
 
 if TYPE_CHECKING:
     from app.models.comment import Comment
+    from app.models.refresh_session import RefreshSession
     from app.models.task import Task
     from app.models.workspace import Workspace, WorkspaceMember
 
@@ -45,4 +46,9 @@ class User(Base):
     )
     comments: Mapped[list["Comment"]] = relationship(
         "Comment", back_populates="author", cascade="all, delete-orphan"
+    )
+    refresh_sessions: Mapped[list["RefreshSession"]] = relationship(
+        "RefreshSession",
+        back_populates="user",
+        cascade="all, delete-orphan",
     )
