@@ -16,6 +16,8 @@ dependencies = [
     "redis>=5.0.0",
     "python-dotenv>=1.0.1",
     "passlib[bcrypt]>=1.7.4",
+    "pyjwt>=2.13.0",
+    "bcrypt==4.0.1",
 ]
 
 
