@@ -31,15 +31,20 @@ redis_client: aioredis.Redis | None = None
 
 async def init_redis() -> aioredis.Redis:
     global redis_client
-    if redis_client is None:
-        try:
-            redis_client = aioredis.from_url(
-                settings.REDIS_URL, encoding="utf-8", decode_responses=True
-            )
-            logger.info("Redis connection initialized successfully.")
-        except Exception as e:
-            logger.error(f"Failed to connect to Redis: {e}")
-    return redis_client
+    if redis_client is not None:
+        return redis_client
+
+    try:
+        client = aioredis.from_url(
+            settings.REDIS_URL, encoding="utf-8", decode_responses=True
+        )
+    except Exception:
+        logger.exception("Failed to initialize Redis connection.")
+        raise
+
+    redis_client = client
+    logger.info("Redis connection initialized successfully.")
+    return client
 
 
 async def close_redis():
