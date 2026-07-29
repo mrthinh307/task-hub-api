@@ -1,6 +1,7 @@
 from collections.abc import Mapping
 from http import HTTPStatus
 from typing import Any
+from unicodedata import category
 
 from fastapi import FastAPI, Request, status
 from fastapi.exceptions import RequestValidationError
@@ -50,6 +51,15 @@ def _status_for_application_error(exc: ApplicationError) -> int:
         if isinstance(exc, error_type):
             return status_code
     return status.HTTP_500_INTERNAL_SERVER_ERROR
+
+
+def _sanitize_log_value(value: str) -> str:
+    return "".join(
+        f"\\x{ord(character):02x}"
+        if category(character) == "Cc"
+        else character
+        for character in value
+    )
 
 
 async def application_error_handler(
@@ -127,8 +137,8 @@ async def unhandled_exception_handler(
 ) -> JSONResponse:
     logger.error(
         "Unhandled exception while processing %s %s",
-        request.method,
-        request.url.path,
+        _sanitize_log_value(request.method),
+        _sanitize_log_value(request.url.path),
         exc_info=(type(exc), exc, exc.__traceback__),
     )
     return _error_response(
