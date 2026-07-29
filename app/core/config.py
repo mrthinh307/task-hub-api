@@ -1,3 +1,4 @@
+from typing import Literal
 from urllib.parse import parse_qs, urlencode, urlparse, urlunparse
 
 from pydantic import Field, field_validator
@@ -20,6 +21,15 @@ class Settings(BaseSettings):
 
     # Security
     SECRET_KEY: str = "dev-secret-key-change-in-production"
+    JWT_ALGORITHM: str = "HS256"
+    ACCESS_TOKEN_EXPIRE_MINUTES: int = 15
+    REFRESH_TOKEN_EXPIRE_DAYS: int = 7
+
+    ACCESS_TOKEN_COOKIE_NAME: str = "access_token"
+    REFRESH_TOKEN_COOKIE_NAME: str = "refresh_token"
+    COOKIE_SECURE: bool = False
+    COOKIE_SAMESITE: Literal["lax", "strict", "none"] = "lax"
+    COOKIE_DOMAIN: str | None = None
 
     @field_validator("DATABASE_URL", mode="before")
     @classmethod
