@@ -5,5 +5,7 @@ from app.repositories.base_repository import RepositoryBase
 
 
 class UserRepository(RepositoryBase[User]):
+    """Placeholder repository; compose capabilities when user features are added."""
+
     def __init__(self, session: AsyncSession):
         super().__init__(User, session)
