@@ -6,6 +6,11 @@ class UserRole(StrEnum):
     MEMBER = "MEMBER"
 
 
+class TokenType(StrEnum):
+    ACCESS = "access"
+    REFRESH = "refresh"
+
+
 class WorkspaceMemberRole(StrEnum):
     OWNER = "OWNER"
     EDITOR = "EDITOR"
