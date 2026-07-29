@@ -90,6 +90,10 @@ Update `DATABASE_URL` in `.env` with your NeonDB PostgreSQL Connection String:
 DATABASE_URL="postgresql+asyncpg://<username>:<password>@<neon-hostname>/<dbname>?sslmode=require"
 ```
 
+```bash
+uv run alembic upgrade head
+```
+
 ### 3. Run Application Locally
 ```bash
 uv run uvicorn app.main:app --reload
@@ -140,6 +144,11 @@ uvx ruff check --fix .
 Format codebase:
 ```bash
 uvx ruff format .
+```
+
+Run check-type:
+```bash
+uv run pyright
 ```
 
 ---
