@@ -1,4 +1,4 @@
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from typing import Any
 
 from pydantic import BaseModel
@@ -8,15 +8,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.db.base import Base
 
 
-class BaseRepository[
-    ModelType: Base,
-    CreateSchemaType: BaseModel,
-    UpdateSchemaType: BaseModel,
-]:
-    """
-    Generic Base Repository implementing standard async CRUD operations.
-    Handles database interaction only.
-    """
+class RepositoryBase[ModelType: Base]:
+    """Shared model and session context for repository capabilities."""
 
     def __init__(
         self,
@@ -26,61 +19,111 @@ class BaseRepository[
         self.model = model
         self.session = session
 
-    async def get_by_id(self, id: Any) -> ModelType | None:
-        """Get a single record by primary key."""
-        return await self.session.get(self.model, id)
+    async def _load_by_id(self, entity_id: Any) -> ModelType | None:
+        return await self.session.get(self.model, entity_id)
+
+    @staticmethod
+    def _dump_input(
+        obj_in: BaseModel | Mapping[str, Any],
+        *,
+        exclude_unset: bool,
+    ) -> dict[str, Any]:
+        if isinstance(obj_in, BaseModel):
+            return obj_in.model_dump(exclude_unset=exclude_unset)
+        return dict(obj_in)
+
+
+class GetByIdRepository[ModelType: Base](RepositoryBase[ModelType]):
+    """Capability for retrieving one model by primary key."""
+
+    async def get_by_id(self, entity_id: Any) -> ModelType | None:
+        return await self._load_by_id(entity_id)
+
+
+class ListRepository[ModelType: Base](RepositoryBase[ModelType]):
+    """Capability for paginated model listing."""
 
     async def get_multi(
         self,
         skip: int = 0,
         limit: int = 100,
     ) -> Sequence[ModelType]:
-        """Get multiple records with pagination."""
         stmt = select(self.model).offset(skip).limit(limit)
         result = await self.session.execute(stmt)
         return result.scalars().all()
 
+
+class CreateRepository[
+    ModelType: Base,
+    CreateSchemaType: BaseModel,
+](RepositoryBase[ModelType]):
+    """Capability for creating a model from a typed schema or mapping."""
+
     async def create(
         self,
-        obj_in: CreateSchemaType | dict[str, Any],
+        obj_in: CreateSchemaType | Mapping[str, Any],
+        *,
+        refresh: bool = True,
     ) -> ModelType:
-        """Create a new record."""
-        if isinstance(obj_in, dict):
-            create_data = obj_in
-        else:
-            create_data = obj_in.model_dump(exclude_unset=True)
-
+        create_data = self._dump_input(obj_in, exclude_unset=False)
         db_obj = self.model(**create_data)
         self.session.add(db_obj)
         await self.session.flush()
-        await self.session.refresh(db_obj)
+        if refresh:
+            await self.session.refresh(db_obj)
         return db_obj
+
+
+class UpdateRepository[
+    ModelType: Base,
+    UpdateSchemaType: BaseModel,
+](RepositoryBase[ModelType]):
+    """Capability for updating a model from explicitly provided fields."""
 
     async def update(
         self,
         db_obj: ModelType,
-        obj_in: UpdateSchemaType | dict[str, Any],
+        obj_in: UpdateSchemaType | Mapping[str, Any],
+        *,
+        refresh: bool = True,
     ) -> ModelType:
-        """Update an existing record."""
-        if isinstance(obj_in, dict):
-            update_data = obj_in
-        else:
-            update_data = obj_in.model_dump(exclude_unset=True)
+        update_data = self._dump_input(obj_in, exclude_unset=True)
+        unknown_fields = [field for field in update_data if not hasattr(db_obj, field)]
+        if unknown_fields:
+            fields = ", ".join(sorted(unknown_fields))
+            raise ValueError(f"Unknown model fields: {fields}")
 
         for field, value in update_data.items():
-            if hasattr(db_obj, field) and value is not None:
-                setattr(db_obj, field, value)
+            setattr(db_obj, field, value)
 
         self.session.add(db_obj)
         await self.session.flush()
-        await self.session.refresh(db_obj)
+        if refresh:
+            await self.session.refresh(db_obj)
         return db_obj
 
-    async def delete(self, id: Any) -> bool:
-        """Delete a record by primary key."""
-        db_obj = await self.get_by_id(id)
-        if db_obj:
-            await self.session.delete(db_obj)
-            await self.session.flush()
-            return True
-        return False
+
+class DeleteRepository[ModelType: Base](RepositoryBase[ModelType]):
+    """Capability for deleting one model by primary key."""
+
+    async def delete(self, entity_id: Any) -> bool:
+        db_obj = await self._load_by_id(entity_id)
+        if db_obj is None:
+            return False
+        await self.session.delete(db_obj)
+        await self.session.flush()
+        return True
+
+
+class BaseRepository[
+    ModelType: Base,
+    CreateSchemaType: BaseModel,
+    UpdateSchemaType: BaseModel,
+](
+    GetByIdRepository[ModelType],
+    ListRepository[ModelType],
+    CreateRepository[ModelType, CreateSchemaType],
+    UpdateRepository[ModelType, UpdateSchemaType],
+    DeleteRepository[ModelType],
+):
+    """Convenience composition for repositories that need complete CRUD."""
