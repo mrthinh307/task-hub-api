@@ -10,14 +10,7 @@ class Settings(BaseSettings):
     API_V1_STR: str = "/api/v1"
     DEBUG: bool = True
 
-    # Local PostgreSQL 16 connection URL exposed by Docker Compose
-    DATABASE_URL: str = Field(
-        default=(
-            "postgresql+asyncpg://task_hub:task_hub_dev_password"
-            "@localhost:5432/task_hub"
-        ),
-        description="Async PostgreSQL connection string",
-    )
+    DATABASE_URL: str = Field(..., description="Async PostgreSQL connection string")
 
     # Redis connection URL
     REDIS_URL: str = "redis://localhost:6379/0"
@@ -80,4 +73,4 @@ class Settings(BaseSettings):
     )
 
 
-settings = Settings()
+settings = Settings()  # pyright: ignore[reportCallIssue]
