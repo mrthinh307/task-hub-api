@@ -7,7 +7,7 @@ A production-ready FastAPI application boilerplate implementing a layered archit
 - **Package Manager:** `uv` (`pyproject.toml`)
 - **Framework:** FastAPI 0.111+
 - **Database ORM:** SQLAlchemy 2.x (Async with `asyncpg`)
-- **Database Engine:** PostgreSQL 16 (Hosted on NeonDB)
+- **Database Engine:** PostgreSQL 16 (Hosted locally by Docker Compose)
 - **Migrations:** Alembic (Async runner)
 - **Data Validation & Settings:** Pydantic v2 & `pydantic-settings`
 - **Cache & Session:** Redis 7 (`redis.asyncio`)
@@ -85,12 +85,14 @@ Create a `.env` file from `.env.example`:
 cp .env.example .env
 ```
 
-Update `DATABASE_URL` in `.env` with your NeonDB PostgreSQL Connection String:
+Configure `.env` to connect local commands to the PostgreSQL port exposed by
+Docker Compose:
 ```env
-DATABASE_URL="postgresql+asyncpg://<username>:<password>@<neon-hostname>/<dbname>?sslmode=require"
+DATABASE_URL="postgresql+asyncpg://task_hub:task_hub_dev_password@localhost:5432/task_hub"
 ```
 
 ```bash
+docker compose up -d postgres
 uv run alembic upgrade head
 ```
 
@@ -104,8 +106,29 @@ uv run uvicorn app.main:app --reload
 ## 🐳 Running with Docker Compose
 
 ```bash
-docker-compose up -d --build
+docker compose watch
 ```
+Compose Watch syncs changes under `app/` into the running container. Changes to
+`pyproject.toml`, `uv.lock`, or `Dockerfile` rebuild the API image automatically.
+PostgreSQL runs in the `postgres` service and Redis runs in the `redis` service.
+The API uses their internal Compose hostnames while it runs in Docker. Local
+commands connect through the ports exposed on `localhost`.
+
+On the first startup, apply the database migrations:
+
+```bash
+docker compose exec api alembic upgrade head
+```
+
+PostgreSQL stores its database files in the `postgres_data` named volume.
+Rebuilding or recreating containers, and running `docker compose down`, preserve
+this volume. Running `docker compose down -v` explicitly deletes it and all
+database data stored in it.
+
+Redis has append-only persistence enabled and stores its files in the
+`redis_data` named volume. The same volume lifecycle rules apply: normal
+container recreation preserves it, while `docker compose down -v` deletes it.
+
 The API server will be available at: `http://localhost:8000`
 - Interactive OpenAPI Docs (Swagger): `http://localhost:8000/docs`
 - ReDoc: `http://localhost:8000/redoc`
@@ -120,16 +143,16 @@ Create a new migration revision:
 uv run alembic revision --autogenerate -m "Initial tables"
 
 # Or via Docker Container
-docker-compose exec web alembic revision --autogenerate -m "Initial tables"
+docker compose exec api alembic revision --autogenerate -m "Initial tables"
 ```
 
-Apply migrations to NeonDB PostgreSQL:
+Apply migrations to Docker-hosted PostgreSQL:
 ```bash
 # Locally with uv
 uv run alembic upgrade head
 
 # Or via Docker Container
-docker-compose exec web alembic upgrade head
+docker compose exec api alembic upgrade head
 ```
 
 ---
@@ -156,5 +179,5 @@ uv run pyright
 ## 🔄 Typical Request Flow
 
 ```text
-Client -> Router (api/v1/endpoints/users.py) -> Service (services/user_service.py) -> Repository (repositories/user_repository.py) -> Database (NeonDB)
+Client -> Router (api/v1/endpoints/users.py) -> Service (services/user_service.py) -> Repository (repositories/user_repository.py) -> Database (PostgreSQL in Docker)
 ```
