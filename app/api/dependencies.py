@@ -10,8 +10,10 @@ from app.models.user import User
 from app.repositories.auth_repository import AuthRepository
 from app.repositories.refresh_session_repository import RefreshSessionRepository
 from app.repositories.user_repository import UserRepository
+from app.repositories.workspace_repository import WorkspaceRepository
 from app.services.auth_service import AuthService
 from app.services.user_service import UserService
+from app.services.workspace_service import WorkspaceService
 
 
 def get_auth_repository(
@@ -45,6 +47,18 @@ def get_user_service(
     user_repo: UserRepository = Depends(get_user_repository),
 ) -> UserService:
     return UserService(user_repo)
+
+
+def get_workspace_repository(
+    session: AsyncSession = Depends(get_db),
+) -> WorkspaceRepository:
+    return WorkspaceRepository(session)
+
+
+def get_workspace_service(
+    workspace_repo: WorkspaceRepository = Depends(get_workspace_repository),
+) -> WorkspaceService:
+    return WorkspaceService(workspace_repo)
 
 
 async def get_current_user(
