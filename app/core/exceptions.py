@@ -51,6 +51,66 @@ class EntityAlreadyExistsError(ConflictError):
         )
 
 
+class WorkspaceInviteeNotFoundError(ResourceNotFoundError):
+    def __init__(self, email: str) -> None:
+        super().__init__(
+            message=f"User with email '{email}' not found",
+            details={"entity": "User", "field": "email", "value": email},
+        )
+
+
+class WorkspaceMemberAlreadyExistsError(ConflictError):
+    def __init__(self, workspace_id: Any, user_id: Any) -> None:
+        super().__init__(
+            message="User is already a member of this workspace",
+            details={
+                "workspace_id": str(workspace_id),
+                "user_id": str(user_id),
+            },
+        )
+
+
+class WorkspaceOwnerMembershipError(ConflictError):
+    def __init__(self, workspace_id: Any, user_id: Any) -> None:
+        super().__init__(
+            message="Workspace owner cannot also be added as a member",
+            details={
+                "workspace_id": str(workspace_id),
+                "user_id": str(user_id),
+            },
+        )
+
+
+class WorkspaceMemberNotFoundError(ResourceNotFoundError):
+    def __init__(self, workspace_id: Any, user_id: Any) -> None:
+        super().__init__(
+            message="Workspace member not found",
+            details={
+                "workspace_id": str(workspace_id),
+                "user_id": str(user_id),
+            },
+        )
+
+
+class WorkspaceOwnerRemovalError(ConflictError):
+    def __init__(self, workspace_id: Any, user_id: Any) -> None:
+        super().__init__(
+            message="Workspace owner cannot be removed through the member endpoint",
+            details={
+                "workspace_id": str(workspace_id),
+                "user_id": str(user_id),
+            },
+        )
+
+
+class InactiveWorkspaceMemberError(ConflictError):
+    def __init__(self, user_id: Any) -> None:
+        super().__init__(
+            message="Inactive users cannot be added to a workspace",
+            details={"user_id": str(user_id)},
+        )
+
+
 class EmailAlreadyRegisteredError(ConflictError):
     """Raised when registration uses an existing email address."""
 

@@ -2,7 +2,7 @@ import uuid
 from typing import TYPE_CHECKING
 
 from sqlalchemy import Enum as SQLEnum
-from sqlalchemy import ForeignKey, String
+from sqlalchemy import ForeignKey, String, UniqueConstraint
 from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -36,6 +36,13 @@ class Workspace(Base):
 
 class WorkspaceMember(Base):
     __tablename__ = "workspace_members"
+    __table_args__ = (
+        UniqueConstraint(
+            "workspace_id",
+            "user_id",
+            name="uq_workspace_members_workspace_user",
+        ),
+    )
 
     workspace_id: Mapped[uuid.UUID] = mapped_column(
         PG_UUID(as_uuid=True),

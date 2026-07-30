@@ -224,6 +224,10 @@ def test_openapi_contains_auth_user_and_health_operations() -> None:
         "/api/v1/auth/refresh",
         "/api/v1/auth/logout",
         "/api/v1/users/me",
+        "/api/v1/workspaces",
+        "/api/v1/workspaces/{workspace_id}",
+        "/api/v1/workspaces/{workspace_id}/members",
+        "/api/v1/workspaces/{workspace_id}/members/{user_id}",
         "/health",
     }
     assert (
