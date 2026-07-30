@@ -92,7 +92,7 @@ DATABASE_URL="postgresql+asyncpg://task_hub:task_hub_dev_password@localhost:5432
 ```
 
 ```bash
-docker compose up -d postgres
+docker compose up -d --wait postgres redis
 uv run alembic upgrade head
 ```
 
