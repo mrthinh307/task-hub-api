@@ -6,7 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 from app.core.config import settings
 from app.core.logging import logger
 
-# Create SQLAlchemy Async Engine for PostgreSQL / NeonDB
+# Create the SQLAlchemy async engine for PostgreSQL running in Docker.
 async_engine = create_async_engine(
     settings.DATABASE_URL,
     echo=settings.DEBUG,
@@ -34,11 +34,22 @@ async def init_redis() -> aioredis.Redis:
     if redis_client is not None:
         return redis_client
 
+    client: aioredis.Redis | None = None
     try:
         client = aioredis.from_url(
-            settings.REDIS_URL, encoding="utf-8", decode_responses=True
+            settings.REDIS_URL,
+            encoding="utf-8",
+            decode_responses=True,
+            max_connections=settings.REDIS_MAX_CONNECTIONS,
+            socket_connect_timeout=settings.REDIS_SOCKET_CONNECT_TIMEOUT,
+            socket_timeout=settings.REDIS_SOCKET_TIMEOUT,
+            health_check_interval=settings.REDIS_HEALTH_CHECK_INTERVAL,
+            retry_on_timeout=True,
         )
+        await client.ping()
     except Exception:
+        if client is not None:
+            await client.aclose()
         logger.exception("Failed to initialize Redis connection.")
         raise
 
@@ -47,10 +58,10 @@ async def init_redis() -> aioredis.Redis:
     return client
 
 
-async def close_redis():
+async def close_redis() -> None:
     global redis_client
-    if redis_client:
-        await redis_client.close()
+    if redis_client is not None:
+        await redis_client.aclose()
         redis_client = None
         logger.info("Redis connection closed.")
 

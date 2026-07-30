@@ -4,10 +4,10 @@
 
 - **Runtime:** Python 3.12+. Use `uv` exclusively for dependency and environment management.
 - **Framework:** FastAPI 0.111+ with Uvicorn 0.30+ (ASGI server)
-- **Database:** PostgreSQL 16 via SQLAlchemy 2.x async (`asyncpg` driver); currently hosted on NeonDB.
+- **Database:** PostgreSQL 16 hosted by Docker Compose, accessed through SQLAlchemy 2.x async (`asyncpg` driver).
 - **Migrations:** Alembic 1.13+ with async runner
 - **Validation & Settings:** Pydantic v2 + `pydantic-settings` v2 (reads from `.env`)
-- **Cache:** Redis 7 via `redis.asyncio` (connection pool initialized in lifespan)
+- **Cache:** Redis 7 hosted by Docker Compose via `redis.asyncio` (connection pool initialized and verified in lifespan)
 - **Auth helpers:** `passlib[bcrypt]` for password hashing
 - **Linter/Formatter:** Ruff 0.4+ (rules: E, W, F, I, UP — line-length 88, target py312)
 
@@ -22,8 +22,8 @@ uv sync
 # Run dev server (reload on file change)
 uv run uvicorn app.main:app --reload
 
-# Run via Docker Compose
-docker-compose up -d --build
+# Run via Docker Compose with automatic source sync/rebuild
+docker compose watch
 
 # Lint and auto-fix
 uv run ruff check --fix app tests --exclude app/db/migrations/versions
@@ -110,7 +110,7 @@ Transaction commit/rollback belongs to the `get_db()` dependency.
 - A bug fix requires a regression test that demonstrates the failure before the
   fix and passes afterward.
 - Unit tests must be deterministic and must not require live PostgreSQL, Redis,
-  NeonDB, or other external services.
+  or other external services.
 - Database, Redis, network, and file I/O on request paths must not block the
   event loop. Use async APIs or move unavoidable blocking work off the event
   loop; pure computation and small synchronous helpers are allowed.

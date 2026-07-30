@@ -10,14 +10,21 @@ class Settings(BaseSettings):
     API_V1_STR: str = "/api/v1"
     DEBUG: bool = True
 
-    # NeonDB PostgreSQL 16 connection URL
+    # Local PostgreSQL 16 connection URL exposed by Docker Compose
     DATABASE_URL: str = Field(
-        default="postgresql+asyncpg://user:password@localhost:5432/neondb",
+        default=(
+            "postgresql+asyncpg://task_hub:task_hub_dev_password"
+            "@localhost:5432/task_hub"
+        ),
         description="Async PostgreSQL connection string",
     )
 
     # Redis connection URL
     REDIS_URL: str = "redis://localhost:6379/0"
+    REDIS_MAX_CONNECTIONS: int = 50
+    REDIS_SOCKET_CONNECT_TIMEOUT: float = 2.0
+    REDIS_SOCKET_TIMEOUT: float = 5.0
+    REDIS_HEALTH_CHECK_INTERVAL: int = 30
 
     # Security
     SECRET_KEY: str = "dev-secret-key-change-in-production"
