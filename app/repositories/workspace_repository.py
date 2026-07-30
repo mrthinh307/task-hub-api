@@ -29,6 +29,19 @@ class WorkspaceRepository(
     def __init__(self, session: AsyncSession):
         super().__init__(Workspace, session)
 
+    async def get_owned_by_id(
+        self,
+        workspace_id: UUID,
+        owner_id: UUID,
+    ) -> Workspace | None:
+        result = await self.session.execute(
+            select(Workspace).where(
+                Workspace.id == workspace_id,
+                Workspace.owner_id == owner_id,
+            )
+        )
+        return result.scalar_one_or_none()
+
     async def get_accessible_by_id(
         self,
         workspace_id: UUID,

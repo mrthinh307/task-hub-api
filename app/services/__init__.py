@@ -4,6 +4,7 @@ from app.services.label_service import LabelService
 from app.services.project_service import ProjectService
 from app.services.task_service import TaskService
 from app.services.user_service import UserService
+from app.services.workspace_membership_service import WorkspaceMembershipService
 from app.services.workspace_service import WorkspaceService
 
 __all__ = [
@@ -13,5 +14,6 @@ __all__ = [
     "ProjectService",
     "TaskService",
     "UserService",
+    "WorkspaceMembershipService",
     "WorkspaceService",
 ]

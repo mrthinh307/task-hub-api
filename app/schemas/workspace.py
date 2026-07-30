@@ -1,9 +1,9 @@
 from datetime import datetime
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator
 
-from app.core.enums import WorkspaceAccessRole
+from app.core.enums import WorkspaceAccessRole, WorkspaceMemberRole
 
 
 class WorkspaceCreate(BaseModel):
@@ -32,3 +32,27 @@ class WorkspaceResponse(BaseModel):
 
 class WorkspaceDetailResponse(WorkspaceResponse):
     role: WorkspaceAccessRole
+
+
+class WorkspaceMemberCreate(BaseModel):
+    email: EmailStr
+    role: WorkspaceMemberRole
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class WorkspaceMemberUserResponse(BaseModel):
+    id: UUID
+    email: EmailStr
+    full_name: str
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class WorkspaceMemberResponse(BaseModel):
+    id: UUID
+    workspace_id: UUID
+    user: WorkspaceMemberUserResponse
+    role: WorkspaceMemberRole
+    created_at: datetime
+    updated_at: datetime
