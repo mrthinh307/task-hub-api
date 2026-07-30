@@ -1,3 +1,4 @@
+import asyncio
 from collections.abc import AsyncGenerator
 
 import redis.asyncio as aioredis
@@ -27,6 +28,7 @@ AsyncSessionLocal = async_sessionmaker(
 
 # Redis connection pool
 redis_client: aioredis.Redis | None = None
+redis_init_lock = asyncio.Lock()
 
 
 async def init_redis() -> aioredis.Redis:
@@ -34,28 +36,32 @@ async def init_redis() -> aioredis.Redis:
     if redis_client is not None:
         return redis_client
 
-    client: aioredis.Redis | None = None
-    try:
-        client = aioredis.from_url(
-            settings.REDIS_URL,
-            encoding="utf-8",
-            decode_responses=True,
-            max_connections=settings.REDIS_MAX_CONNECTIONS,
-            socket_connect_timeout=settings.REDIS_SOCKET_CONNECT_TIMEOUT,
-            socket_timeout=settings.REDIS_SOCKET_TIMEOUT,
-            health_check_interval=settings.REDIS_HEALTH_CHECK_INTERVAL,
-            retry_on_timeout=True,
-        )
-        await client.ping()
-    except Exception:
-        if client is not None:
-            await client.aclose()
-        logger.exception("Failed to initialize Redis connection.")
-        raise
+    async with redis_init_lock:
+        if redis_client is not None:
+            return redis_client
 
-    redis_client = client
-    logger.info("Redis connection initialized successfully.")
-    return client
+        client: aioredis.Redis | None = None
+        try:
+            client = aioredis.from_url(
+                settings.REDIS_URL,
+                encoding="utf-8",
+                decode_responses=True,
+                max_connections=settings.REDIS_MAX_CONNECTIONS,
+                socket_connect_timeout=settings.REDIS_SOCKET_CONNECT_TIMEOUT,
+                socket_timeout=settings.REDIS_SOCKET_TIMEOUT,
+                health_check_interval=settings.REDIS_HEALTH_CHECK_INTERVAL,
+                retry_on_timeout=True,
+            )
+            await client.ping()
+        except Exception:
+            if client is not None:
+                await client.aclose()
+            logger.exception("Failed to initialize Redis connection.")
+            raise
+
+        redis_client = client
+        logger.info("Redis connection initialized successfully.")
+        return client
 
 
 async def close_redis() -> None:

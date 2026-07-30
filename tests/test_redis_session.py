@@ -1,3 +1,5 @@
+import asyncio
+
 import pytest
 
 from app.db import session as db_session
@@ -11,6 +13,7 @@ class FakeRedisClient:
 
     async def ping(self) -> bool:
         self.ping_calls += 1
+        await asyncio.sleep(0)
         if self.ping_error is not None:
             raise self.ping_error
         return True
@@ -74,3 +77,29 @@ async def test_init_redis_closes_failed_client(monkeypatch) -> None:
     assert fake_client.ping_calls == 1
     assert fake_client.close_calls == 1
     assert db_session.redis_client is None
+
+
+@pytest.mark.asyncio
+async def test_concurrent_get_redis_calls_create_one_client(monkeypatch) -> None:
+    created_clients: list[FakeRedisClient] = []
+
+    def fake_from_url(*args, **kwargs) -> FakeRedisClient:
+        client = FakeRedisClient()
+        created_clients.append(client)
+        return client
+
+    async def resolve_client():
+        dependency = db_session.get_redis()
+        try:
+            return await anext(dependency)
+        finally:
+            await dependency.aclose()
+
+    monkeypatch.setattr(db_session, "redis_client", None)
+    monkeypatch.setattr(db_session, "redis_init_lock", asyncio.Lock())
+    monkeypatch.setattr(db_session.aioredis, "from_url", fake_from_url)
+
+    clients = await asyncio.gather(*(resolve_client() for _ in range(10)))
+
+    assert len(created_clients) == 1
+    assert all(client is created_clients[0] for client in clients)

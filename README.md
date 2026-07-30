@@ -92,67 +92,127 @@ DATABASE_URL="postgresql+asyncpg://task_hub:task_hub_dev_password@localhost:5432
 ```
 
 ```bash
-docker compose up -d postgres
+docker compose up -d --wait postgres redis
 uv run alembic upgrade head
 ```
 
-### 3. Run Application Locally
+### 3. Run the Application Locally
+
+Start PostgreSQL and Redis with Docker Compose:
+
+```bash
+docker compose up -d --wait postgres redis
+```
+
+Apply the database migrations:
+
+```bash
+uv run alembic upgrade head
+```
+
+Then start the FastAPI development server on your host machine:
+
 ```bash
 uv run uvicorn app.main:app --reload
+```
+
+When the API runs locally, it connects to PostgreSQL and Redis through the ports
+exposed on `localhost`. Make sure the local values in `.env` use hosts such as:
+
+```env
+DATABASE_URL=postgresql+asyncpg://task_hub:task_hub_dev_password@localhost:5432/task_hub
+REDIS_URL=redis://localhost:6379/0
 ```
 
 ---
 
 ## 🐳 Running with Docker Compose
 
-```bash
-docker compose watch
-```
-Compose Watch syncs changes under `app/` into the running container. Changes to
-`pyproject.toml`, `uv.lock`, or `Dockerfile` rebuild the API image automatically.
-PostgreSQL runs in the `postgres` service and Redis runs in the `redis` service.
-The API uses their internal Compose hostnames while it runs in Docker. Local
-commands connect through the ports exposed on `localhost`.
+Start the complete development environment with Compose Watch:
 
-On the first startup, apply the database migrations:
+```bash
+docker compose up --watch
+```
+
+This command starts the following services:
+
+* `api`: FastAPI application
+* `postgres`: PostgreSQL database
+* `redis`: Redis server
+
+The `api` service waits until PostgreSQL and Redis pass their health checks
+before starting.
+
+Compose Watch applies the rules defined under `develop.watch`:
+
+* Changes under `app/` are synchronized into `/app/app` inside the running API
+  container.
+* Changes to `pyproject.toml`, `uv.lock`, or `Dockerfile` rebuild the API image
+  and recreate the API container.
+
+The API process inside the container must run Uvicorn with `--reload` for
+synchronized Python source changes to reload the application automatically.
+Otherwise, use the `sync+restart` Watch action instead of `sync`.
+
+Inside the Compose network, the API connects to the other services using their
+service names:
+
+```text
+postgres:5432
+redis:6379
+```
+
+From the host machine, PostgreSQL and Redis are available through their exposed
+ports on `localhost`.
+
+### Apply database migrations
+
+On the first startup, and whenever new Alembic migrations are added, run:
 
 ```bash
 docker compose exec api alembic upgrade head
 ```
 
-PostgreSQL stores its database files in the `postgres_data` named volume.
-Rebuilding or recreating containers, and running `docker compose down`, preserve
-this volume. Running `docker compose down -v` explicitly deletes it and all
-database data stored in it.
+### Application URLs
 
-Redis has append-only persistence enabled and stores its files in the
-`redis_data` named volume. The same volume lifecycle rules apply: normal
-container recreation preserves it, while `docker compose down -v` deletes it.
+The API is available at:
 
-The API server will be available at: `http://localhost:8000`
-- Interactive OpenAPI Docs (Swagger): `http://localhost:8000/docs`
-- ReDoc: `http://localhost:8000/redoc`
-
----
-
-## 🔄 Database Migrations with Alembic
-
-Create a new migration revision:
-```bash
-# Locally with uv
-uv run alembic revision --autogenerate -m "Initial tables"
-
-# Or via Docker Container
-docker compose exec api alembic revision --autogenerate -m "Initial tables"
+```text
+http://localhost:8000
 ```
 
-Apply migrations to Docker-hosted PostgreSQL:
-```bash
-# Locally with uv
-uv run alembic upgrade head
+API documentation:
 
-# Or via Docker Container
-docker compose exec api alembic upgrade head
+* Swagger UI: `http://localhost:8000/docs`
+* ReDoc: `http://localhost:8000/redoc`
+
+### Data persistence
+
+PostgreSQL stores its data in the `postgres_data` named volume.
+
+Redis uses append-only persistence and stores its data in the `redis_data`
+named volume.
+
+The volumes are preserved when containers are rebuilt, recreated, or stopped
+with:
+
+```bash
+docker compose down
+```
+
+To stop the services and permanently delete both PostgreSQL and Redis data, run:
+
+```bash
+docker compose down -v
+```
+
+> **Warning:** `docker compose down -v` permanently removes the
+> `postgres_data` and `redis_data` volumes.
+
+To start the services again later:
+
+```bash
+docker compose up --watch
 ```
 
 ---
