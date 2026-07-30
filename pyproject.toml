@@ -1,7 +1,7 @@
 [project]
 name = "task-hub-api"
 version = "0.1.0"
-description = "FastAPI Task Hub API with Layered Architecture, PostgreSQL 16 (NeonDB), SQLAlchemy 2.x async, Alembic, Pydantic v2, and Redis 7."
+description = "FastAPI Task Hub API with Layered Architecture, Docker-hosted PostgreSQL 16, SQLAlchemy 2.x async, Alembic, Pydantic v2, and Redis 7."
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [

@@ -1,27 +1,74 @@
-version: '3.8'
-
 services:
-  web:
-    build: .
-    container_name: task_hub_web
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    init: true
     ports:
       - "8000:8000"
-    volumes:
-      - .:/app
-    environment:
-      - REDIS_URL=redis://redis:6379/0
     env_file:
       - .env
+    environment:
+      DATABASE_URL: >-
+        postgresql+asyncpg://${POSTGRES_USER:-task_hub}:${POSTGRES_PASSWORD:-task_hub_dev_password}@postgres:5432/${POSTGRES_DB:-task_hub}
+      REDIS_URL: redis://redis:6379/0
     depends_on:
-      - redis
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    develop:
+      watch:
+        - action: sync
+          path: ./app
+          target: /app/app
+          initial_sync: true
+        - action: rebuild
+          path: ./pyproject.toml
+        - action: rebuild
+          path: ./uv.lock
+        - action: rebuild
+          path: ./Dockerfile
+
+  postgres:
+    image: postgres:16-alpine
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-task_hub}
+      POSTGRES_USER: ${POSTGRES_USER:-task_hub}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-task_hub_dev_password}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - pg_isready -U "$${POSTGRES_USER}" -d "$${POSTGRES_DB}"
+      interval: 5s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
 
   redis:
     image: redis:7-alpine
-    container_name: task_hub_redis
+    command:
+      - redis-server
+      - --appendonly
+      - "yes"
     ports:
-      - "6379:6379"
+      - "${REDIS_PORT:-6379}:6379"
     volumes:
       - redis_data:/data
+    healthcheck:
+      test:
+        - CMD
+        - redis-cli
+        - ping
+      interval: 5s
+      timeout: 3s
+      retries: 5
+      start_period: 5s
 
 volumes:
+  postgres_data:
   redis_data:

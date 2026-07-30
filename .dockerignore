@@ -1,0 +1,14 @@
+.git
+.codegraph
+.agents
+.venv
+.pytest_cache
+.ruff_cache
+**/__pycache__
+**/*.py[cod]
+.env
+.env.*
+!.env.example
+.gitignore
+README.md
+tests

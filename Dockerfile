@@ -1,21 +1,19 @@
-FROM python:3.11-slim
+FROM python:3.12-slim
 
-# Install uv from Astral official image
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
 
 WORKDIR /app
 
-# Enable bytecode compilation
-ENV UV_COMPILE_BYTECODE=1
+ENV PATH="/app/.venv/bin:$PATH" \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    UV_COMPILE_BYTECODE=1 \
+    UV_LINK_MODE=copy
 
-# Copy dependency definition files
-COPY pyproject.toml .
-# COPY uv.lock . # Uncomment when lockfile is generated
+COPY pyproject.toml uv.lock ./
 
-# Install dependencies using uv
-RUN uv pip install --system .
+RUN uv sync --frozen --no-dev --no-install-project
 
-# Copy remaining project files
 COPY . .
 
 EXPOSE 8000
