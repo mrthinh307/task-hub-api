@@ -81,6 +81,28 @@ class WorkspaceOwnerMembershipError(ConflictError):
         )
 
 
+class WorkspaceMemberNotFoundError(ResourceNotFoundError):
+    def __init__(self, workspace_id: Any, user_id: Any) -> None:
+        super().__init__(
+            message="Workspace member not found",
+            details={
+                "workspace_id": str(workspace_id),
+                "user_id": str(user_id),
+            },
+        )
+
+
+class WorkspaceOwnerRemovalError(ConflictError):
+    def __init__(self, workspace_id: Any, user_id: Any) -> None:
+        super().__init__(
+            message="Workspace owner cannot be removed through the member endpoint",
+            details={
+                "workspace_id": str(workspace_id),
+                "user_id": str(user_id),
+            },
+        )
+
+
 class InactiveWorkspaceMemberError(ConflictError):
     def __init__(self, user_id: Any) -> None:
         super().__init__(

@@ -94,3 +94,21 @@ async def test_workspace_member_repository_creates_and_flushes_membership() -> N
     session.add.assert_called_once_with(member)
     session.flush.assert_awaited_once()
     session.refresh.assert_awaited_once_with(member)
+
+
+@pytest.mark.asyncio
+async def test_workspace_member_repository_deletes_and_flushes_membership() -> None:
+    session = MagicMock(spec=AsyncSession)
+    session.delete = AsyncMock()
+    session.flush = AsyncMock()
+    member = WorkspaceMember(
+        id=uuid4(),
+        workspace_id=uuid4(),
+        user_id=uuid4(),
+        role=WorkspaceMemberRole.VIEWER,
+    )
+
+    await WorkspaceMemberRepository(session).delete_member(member)
+
+    session.delete.assert_awaited_once_with(member)
+    session.flush.assert_awaited_once()

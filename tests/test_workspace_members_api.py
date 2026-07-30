@@ -9,7 +9,11 @@ from app.api.dependencies import (
     get_workspace_membership_service,
 )
 from app.core.enums import UserRole, WorkspaceMemberRole
-from app.core.exceptions import WorkspaceMemberAlreadyExistsError
+from app.core.exceptions import (
+    WorkspaceMemberAlreadyExistsError,
+    WorkspaceMemberNotFoundError,
+    WorkspaceOwnerRemovalError,
+)
 from app.main import create_app
 from app.models.user import User
 from app.schemas.workspace import (
@@ -24,6 +28,8 @@ class FakeWorkspaceMembershipService:
         self.member_user = member_user
         self.calls: list[tuple[UUID, User, WorkspaceMemberCreate]] = []
         self.error: Exception | None = None
+        self.remove_calls: list[tuple[UUID, UUID, User]] = []
+        self.remove_error: Exception | None = None
 
     async def add_member(
         self,
@@ -44,6 +50,16 @@ class FakeWorkspaceMembershipService:
             created_at=now,
             updated_at=now,
         )
+
+    async def remove_member(
+        self,
+        workspace_id: UUID,
+        user_id: UUID,
+        current_user: User,
+    ) -> None:
+        self.remove_calls.append((workspace_id, user_id, current_user))
+        if self.remove_error is not None:
+            raise self.remove_error
 
 
 def make_user(email: str) -> User:
@@ -184,6 +200,114 @@ def test_add_workspace_member_documents_expected_responses() -> None:
 
     assert set(operation["responses"]) == {
         "201",
+        "401",
+        "403",
+        "404",
+        "409",
+        "422",
+    }
+
+
+def test_remove_workspace_member_returns_no_content() -> None:
+    owner = make_user("owner@example.com")
+    service = FakeWorkspaceMembershipService(make_user("member@example.com"))
+    client = create_authenticated_client(owner, service)
+    workspace_id = uuid4()
+    user_id = uuid4()
+
+    response = client.delete(
+        f"/api/v1/workspaces/{workspace_id}/members/{user_id}"
+    )
+
+    assert response.status_code == 204
+    assert response.content == b""
+    assert service.remove_calls == [(workspace_id, user_id, owner)]
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        f"/api/v1/workspaces/not-a-uuid/members/{uuid4()}",
+        f"/api/v1/workspaces/{uuid4()}/members/not-a-uuid",
+    ],
+)
+def test_remove_workspace_member_rejects_invalid_ids(path: str) -> None:
+    owner = make_user("owner@example.com")
+    service = FakeWorkspaceMembershipService(make_user("member@example.com"))
+    client = create_authenticated_client(owner, service)
+
+    response = client.delete(path)
+
+    assert response.status_code == 422
+    assert response.json()["error"]["message"] == "Request validation failed"
+    assert service.remove_calls == []
+
+
+def test_remove_workspace_member_maps_missing_member_to_not_found() -> None:
+    owner = make_user("owner@example.com")
+    service = FakeWorkspaceMembershipService(make_user("member@example.com"))
+    workspace_id = uuid4()
+    user_id = uuid4()
+    service.remove_error = WorkspaceMemberNotFoundError(workspace_id, user_id)
+    client = create_authenticated_client(owner, service)
+
+    response = client.delete(
+        f"/api/v1/workspaces/{workspace_id}/members/{user_id}"
+    )
+
+    assert response.status_code == 404
+    assert response.json()["error"] == {
+        "code": 404,
+        "message": "Workspace member not found",
+        "details": {
+            "workspace_id": str(workspace_id),
+            "user_id": str(user_id),
+        },
+    }
+
+
+def test_remove_workspace_member_rejects_owner_removal() -> None:
+    owner = make_user("owner@example.com")
+    service = FakeWorkspaceMembershipService(make_user("member@example.com"))
+    workspace_id = uuid4()
+    service.remove_error = WorkspaceOwnerRemovalError(workspace_id, owner.id)
+    client = create_authenticated_client(owner, service)
+
+    response = client.delete(
+        f"/api/v1/workspaces/{workspace_id}/members/{owner.id}"
+    )
+
+    assert response.status_code == 409
+    assert response.json()["error"]["message"] == (
+        "Workspace owner cannot be removed through the member endpoint"
+    )
+
+
+def test_remove_workspace_member_requires_authentication() -> None:
+    service = FakeWorkspaceMembershipService(make_user("member@example.com"))
+    app = create_app()
+    app.dependency_overrides[get_workspace_membership_service] = lambda: service
+    client = TestClient(app)
+
+    response = client.delete(
+        f"/api/v1/workspaces/{uuid4()}/members/{uuid4()}"
+    )
+
+    assert response.status_code == 401
+    assert service.remove_calls == []
+
+
+def test_remove_workspace_member_documents_expected_responses() -> None:
+    owner = make_user("owner@example.com")
+    service = FakeWorkspaceMembershipService(make_user("member@example.com"))
+    client = create_authenticated_client(owner, service)
+
+    operation = client.get("/api/v1/openapi.json").json()["paths"][
+        "/api/v1/workspaces/{workspace_id}/members/{user_id}"
+    ]["delete"]
+
+    assert set(operation["responses"]) == {
+        "204",
         "401",
         "403",
         "404",

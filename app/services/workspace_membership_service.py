@@ -7,7 +7,9 @@ from app.core.exceptions import (
     InactiveWorkspaceMemberError,
     WorkspaceInviteeNotFoundError,
     WorkspaceMemberAlreadyExistsError,
+    WorkspaceMemberNotFoundError,
     WorkspaceOwnerMembershipError,
+    WorkspaceOwnerRemovalError,
 )
 from app.models.user import User
 from app.repositories.user_repository import UserRepository
@@ -90,3 +92,27 @@ class WorkspaceMembershipService:
             created_at=member.created_at,
             updated_at=member.updated_at,
         )
+
+    async def remove_member(
+        self,
+        workspace_id: UUID,
+        user_id: UUID,
+        current_user: User,
+    ) -> None:
+        workspace = await self.workspace_repo.get_owned_by_id(
+            workspace_id,
+            current_user.id,
+        )
+        if workspace is None:
+            raise EntityNotFoundError("Workspace", workspace_id)
+        if user_id == workspace.owner_id:
+            raise WorkspaceOwnerRemovalError(workspace.id, user_id)
+
+        member = await self.member_repo.get_by_workspace_and_user(
+            workspace.id,
+            user_id,
+        )
+        if member is None:
+            raise WorkspaceMemberNotFoundError(workspace.id, user_id)
+
+        await self.member_repo.delete_member(member)

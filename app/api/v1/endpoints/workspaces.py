@@ -80,3 +80,25 @@ async def add_workspace_member(
     ),
 ) -> WorkspaceMemberResponse:
     return await service.add_member(workspace_id, current_user, payload)
+
+
+@router.delete(
+    "/{workspace_id}/members/{user_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    responses={
+        status.HTTP_401_UNAUTHORIZED: {"model": ErrorResponse},
+        status.HTTP_403_FORBIDDEN: {"model": ErrorResponse},
+        status.HTTP_404_NOT_FOUND: {"model": ErrorResponse},
+        status.HTTP_409_CONFLICT: {"model": ErrorResponse},
+        status.HTTP_422_UNPROCESSABLE_CONTENT: {"model": ErrorResponse},
+    },
+)
+async def remove_workspace_member(
+    workspace_id: UUID,
+    user_id: UUID,
+    current_user: User = Depends(get_current_user),
+    service: WorkspaceMembershipService = Depends(
+        get_workspace_membership_service
+    ),
+) -> None:
+    await service.remove_member(workspace_id, user_id, current_user)

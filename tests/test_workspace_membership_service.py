@@ -10,7 +10,9 @@ from app.core.exceptions import (
     InactiveWorkspaceMemberError,
     WorkspaceInviteeNotFoundError,
     WorkspaceMemberAlreadyExistsError,
+    WorkspaceMemberNotFoundError,
     WorkspaceOwnerMembershipError,
+    WorkspaceOwnerRemovalError,
 )
 from app.models.user import User
 from app.models.workspace import Workspace, WorkspaceMember
@@ -56,6 +58,7 @@ class FakeWorkspaceMemberRepository(WorkspaceMemberRepository):
         self.existing_member: WorkspaceMember | None = None
         self.create_error: IntegrityError | None = None
         self.created_member: WorkspaceMember | None = None
+        self.deleted_member: WorkspaceMember | None = None
         self.lookup_calls: list[tuple[UUID, UUID]] = []
 
     async def get_by_workspace_and_user(
@@ -86,6 +89,9 @@ class FakeWorkspaceMemberRepository(WorkspaceMemberRepository):
             updated_at=now,
         )
         return self.created_member
+
+    async def delete_member(self, member: WorkspaceMember) -> None:
+        self.deleted_member = member
 
 
 def make_user(
@@ -306,3 +312,65 @@ async def test_add_member_does_not_mask_other_integrity_errors() -> None:
                 role=WorkspaceMemberRole.EDITOR,
             ),
         )
+
+
+@pytest.mark.asyncio
+async def test_remove_member_deletes_existing_membership() -> None:
+    owner = make_user(email="owner@example.com")
+    member_user = make_user(email="member@example.com")
+    workspace = make_workspace(owner)
+    service, workspace_repo, member_repo, _ = make_service(workspace, None)
+    membership = WorkspaceMember(
+        id=uuid4(),
+        workspace_id=workspace.id,
+        user_id=member_user.id,
+        role=WorkspaceMemberRole.VIEWER,
+    )
+    member_repo.existing_member = membership
+
+    await service.remove_member(workspace.id, member_user.id, owner)
+
+    assert workspace_repo.calls == [(workspace.id, owner.id)]
+    assert member_repo.lookup_calls == [(workspace.id, member_user.id)]
+    assert member_repo.deleted_member is membership
+
+
+@pytest.mark.asyncio
+async def test_remove_member_hides_workspace_from_non_owner() -> None:
+    current_user = make_user(email="viewer@example.com")
+    member_user = make_user(email="member@example.com")
+    workspace_id = uuid4()
+    service, _, member_repo, _ = make_service(None, None)
+
+    with pytest.raises(EntityNotFoundError):
+        await service.remove_member(workspace_id, member_user.id, current_user)
+
+    assert member_repo.lookup_calls == []
+    assert member_repo.deleted_member is None
+
+
+@pytest.mark.asyncio
+async def test_remove_member_rejects_workspace_owner() -> None:
+    owner = make_user(email="owner@example.com")
+    workspace = make_workspace(owner)
+    service, _, member_repo, _ = make_service(workspace, None)
+
+    with pytest.raises(WorkspaceOwnerRemovalError):
+        await service.remove_member(workspace.id, owner.id, owner)
+
+    assert member_repo.lookup_calls == []
+    assert member_repo.deleted_member is None
+
+
+@pytest.mark.asyncio
+async def test_remove_member_rejects_missing_membership() -> None:
+    owner = make_user(email="owner@example.com")
+    workspace = make_workspace(owner)
+    missing_user_id = uuid4()
+    service, _, member_repo, _ = make_service(workspace, None)
+
+    with pytest.raises(WorkspaceMemberNotFoundError):
+        await service.remove_member(workspace.id, missing_user_id, owner)
+
+    assert member_repo.lookup_calls == [(workspace.id, missing_user_id)]
+    assert member_repo.deleted_member is None

@@ -50,3 +50,7 @@ class WorkspaceMemberRepository(
                 role=role,
             )
         )
+
+    async def delete_member(self, member: WorkspaceMember) -> None:
+        await self.session.delete(member)
+        await self.session.flush()
