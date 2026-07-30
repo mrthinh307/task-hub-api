@@ -63,6 +63,18 @@ class InvalidCredentialsError(AuthenticationError):
     default_message = "Invalid email or password"
 
 
+class InvalidCurrentPasswordError(AuthenticationError):
+    """Raised when profile password confirmation fails."""
+
+    default_message = "Current password is incorrect"
+
+
+class PasswordUnchangedError(ConflictError):
+    """Raised when a password change reuses the current password."""
+
+    default_message = "New password must differ from current password"
+
+
 class InactiveUserError(PermissionDeniedError):
     """Raised when authentication is attempted for an inactive user."""
 

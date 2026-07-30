@@ -212,7 +212,7 @@ def test_logout_revokes_cookie_session_and_clears_cookies() -> None:
     assert len(response.headers.get_list("set-cookie")) == 2
 
 
-def test_openapi_contains_only_auth_and_health_operations() -> None:
+def test_openapi_contains_auth_user_and_health_operations() -> None:
     client = create_client(FakeAuthService())
 
     openapi = client.get("/api/v1/openapi.json").json()
@@ -223,6 +223,7 @@ def test_openapi_contains_only_auth_and_health_operations() -> None:
         "/api/v1/auth/login",
         "/api/v1/auth/refresh",
         "/api/v1/auth/logout",
+        "/api/v1/users/me",
         "/health",
     }
     assert (
@@ -240,3 +241,12 @@ def test_openapi_contains_only_auth_and_health_operations() -> None:
         openapi["components"]["schemas"]["ErrorContent"]["properties"]["code"]["type"]
         == "integer"
     )
+    user_me_operations = openapi["paths"]["/api/v1/users/me"]
+    assert set(user_me_operations) == {"get", "patch"}
+    assert set(user_me_operations["patch"]["responses"]) == {
+        "200",
+        "401",
+        "403",
+        "409",
+        "422",
+    }

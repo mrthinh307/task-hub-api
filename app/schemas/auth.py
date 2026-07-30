@@ -2,6 +2,8 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator
 
+from app.utils.validators import validate_bcrypt_password_length
+
 
 class RegisterRequest(BaseModel):
     email: EmailStr
@@ -11,9 +13,7 @@ class RegisterRequest(BaseModel):
     @field_validator("password")
     @classmethod
     def validate_bcrypt_length(cls, value: str) -> str:
-        if len(value.encode("utf-8")) > 72:
-            raise ValueError("Password must not exceed 72 bytes")
-        return value
+        return validate_bcrypt_password_length(value)
 
     @field_validator("full_name")
     @classmethod
