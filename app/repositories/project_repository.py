@@ -5,7 +5,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.enums import ProjectStatus
 from app.models.project import Project
-from app.repositories.base_repository import CreateRepository
+from app.repositories.base_repository import CreateRepository, GetByIdRepository
 
 
 class ProjectCreateData(BaseModel):
@@ -16,6 +16,7 @@ class ProjectCreateData(BaseModel):
 
 
 class ProjectRepository(
+    GetByIdRepository[Project],
     CreateRepository[Project, ProjectCreateData],
 ):
     """Persistence operations required by project features."""
