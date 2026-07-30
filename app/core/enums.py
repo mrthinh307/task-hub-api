@@ -12,6 +12,11 @@ class TokenType(StrEnum):
 
 
 class WorkspaceMemberRole(StrEnum):
+    EDITOR = "EDITOR"
+    VIEWER = "VIEWER"
+
+
+class WorkspaceAccessRole(StrEnum):
     OWNER = "OWNER"
     EDITOR = "EDITOR"
     VIEWER = "VIEWER"
