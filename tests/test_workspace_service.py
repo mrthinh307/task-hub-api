@@ -1,12 +1,16 @@
 from datetime import UTC, datetime
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import pytest
 
-from app.core.enums import UserRole
+from app.core.enums import UserRole, WorkspaceAccessRole
+from app.core.exceptions import EntityNotFoundError
 from app.models.user import User
 from app.models.workspace import Workspace
-from app.repositories.workspace_repository import WorkspaceCreateData
+from app.repositories.workspace_repository import (
+    WorkspaceAccess,
+    WorkspaceCreateData,
+)
 from app.schemas.workspace import WorkspaceCreate
 from app.services.workspace_service import WorkspaceService
 
@@ -14,6 +18,8 @@ from app.services.workspace_service import WorkspaceService
 class FakeWorkspaceRepository:
     def __init__(self) -> None:
         self.create_calls: list[WorkspaceCreateData] = []
+        self.access: WorkspaceAccess | None = None
+        self.get_calls: list[tuple[UUID, UUID]] = []
 
     async def create(
         self,
@@ -30,6 +36,14 @@ class FakeWorkspaceRepository:
             created_at=now,
             updated_at=now,
         )
+
+    async def get_accessible_by_id(
+        self,
+        workspace_id: UUID,
+        user_id: UUID,
+    ) -> WorkspaceAccess | None:
+        self.get_calls.append((workspace_id, user_id))
+        return self.access
 
 
 def make_user() -> User:
@@ -62,3 +76,54 @@ async def test_create_workspace_assigns_authenticated_user_as_owner() -> None:
             owner_id=current_user.id,
         )
     ]
+
+
+@pytest.mark.parametrize(
+    "role",
+    [
+        WorkspaceAccessRole.OWNER,
+        WorkspaceAccessRole.EDITOR,
+        WorkspaceAccessRole.VIEWER,
+    ],
+)
+@pytest.mark.asyncio
+async def test_get_workspace_returns_effective_role(
+    role: WorkspaceAccessRole,
+) -> None:
+    repo = FakeWorkspaceRepository()
+    service = WorkspaceService(repo)  # type: ignore[arg-type]
+    current_user = make_user()
+    now = datetime.now(UTC)
+    workspace = Workspace(
+        id=uuid4(),
+        name="Engineering",
+        owner_id=current_user.id,
+        created_at=now,
+        updated_at=now,
+    )
+    repo.access = WorkspaceAccess(workspace=workspace, role=role)
+
+    result = await service.get_workspace(workspace.id, current_user)
+
+    assert result.id == workspace.id
+    assert result.name == workspace.name
+    assert result.owner_id == workspace.owner_id
+    assert result.role is role
+    assert repo.get_calls == [(workspace.id, current_user.id)]
+
+
+@pytest.mark.asyncio
+async def test_get_workspace_hides_missing_or_inaccessible_workspace() -> None:
+    repo = FakeWorkspaceRepository()
+    service = WorkspaceService(repo)  # type: ignore[arg-type]
+    current_user = make_user()
+    workspace_id = uuid4()
+
+    with pytest.raises(EntityNotFoundError) as exc_info:
+        await service.get_workspace(workspace_id, current_user)
+
+    assert exc_info.value.details == {
+        "entity": "Workspace",
+        "id": str(workspace_id),
+    }
+    assert repo.get_calls == [(workspace_id, current_user.id)]
