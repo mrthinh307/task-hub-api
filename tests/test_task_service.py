@@ -21,7 +21,7 @@ from app.models.project import Project
 from app.models.task import Task
 from app.models.user import User
 from app.models.workspace import Workspace
-from app.repositories.task_repository import TaskCreateData
+from app.repositories.task_repository import TaskCreateData, TaskListResult
 from app.repositories.workspace_repository import WorkspaceAccess
 from app.schemas.task import TaskCreate
 from app.services.task_service import TaskService
@@ -30,6 +30,8 @@ from app.services.task_service import TaskService
 class FakeTaskRepository:
     def __init__(self) -> None:
         self.create_calls: list[TaskCreateData] = []
+        self.list_calls: list[tuple[UUID, int, int]] = []
+        self.list_result = TaskListResult(items=[], total=0)
 
     async def create(
         self,
@@ -52,6 +54,16 @@ class FakeTaskRepository:
             created_at=now,
             updated_at=now,
         )
+
+    async def list_by_project(
+        self,
+        project_id: UUID,
+        *,
+        offset: int,
+        limit: int,
+    ) -> TaskListResult:
+        self.list_calls.append((project_id, offset, limit))
+        return self.list_result
 
 
 class FakeProjectRepository:
@@ -399,3 +411,96 @@ async def test_create_task_rejects_assignee_outside_workspace() -> None:
         )
 
     assert task_repo.create_calls == []
+
+
+@pytest.mark.parametrize(
+    "role",
+    [
+        WorkspaceAccessRole.OWNER,
+        WorkspaceAccessRole.EDITOR,
+        WorkspaceAccessRole.VIEWER,
+    ],
+)
+@pytest.mark.asyncio
+async def test_list_tasks_returns_paginated_tasks_for_all_workspace_roles(
+    role: WorkspaceAccessRole,
+) -> None:
+    service, task_repo, project_repo, workspace_repo, _ = make_service()
+    current_user = make_user()
+    workspace = make_workspace(owner_id=current_user.id)
+    project = make_project(workspace.id)
+    project_repo.projects[project.id] = project
+    workspace_repo.access_by_user[current_user.id] = WorkspaceAccess(
+        workspace=workspace,
+        role=role,
+    )
+    task = Task(
+        id=uuid4(),
+        project_id=project.id,
+        assignee_id=None,
+        created_by=current_user.id,
+        title="Task",
+        description=None,
+        status=TaskStatus.TODO,
+        priority=TaskPriority.MEDIUM,
+        due_date=None,
+        created_at=datetime.now(UTC),
+        updated_at=datetime.now(UTC),
+    )
+    task_repo.list_result = TaskListResult(items=[task], total=21)
+
+    result = await service.list_tasks(
+        project.id,
+        current_user,
+        page=2,
+        page_size=10,
+    )
+
+    assert result.items[0].id == task.id
+    assert result.page == 2
+    assert result.page_size == 10
+    assert result.total == 21
+    assert result.total_pages == 3
+    assert task_repo.list_calls == [(project.id, 10, 10)]
+
+
+@pytest.mark.asyncio
+async def test_list_tasks_allows_archived_project() -> None:
+    service, task_repo, project_repo, workspace_repo, _ = make_service()
+    current_user = make_user()
+    workspace = make_workspace(owner_id=current_user.id)
+    project = make_project(workspace.id, status=ProjectStatus.ARCHIVED)
+    project_repo.projects[project.id] = project
+    workspace_repo.access_by_user[current_user.id] = WorkspaceAccess(
+        workspace=workspace,
+        role=WorkspaceAccessRole.OWNER,
+    )
+
+    result = await service.list_tasks(
+        project.id,
+        current_user,
+        page=1,
+        page_size=20,
+    )
+
+    assert result.items == []
+    assert result.total_pages == 0
+    assert task_repo.list_calls == [(project.id, 0, 20)]
+
+
+@pytest.mark.asyncio
+async def test_list_tasks_hides_missing_or_inaccessible_project() -> None:
+    service, task_repo, project_repo, _, _ = make_service()
+    current_user = make_user()
+    project = make_project(uuid4())
+    project_repo.projects[project.id] = project
+
+    with pytest.raises(EntityNotFoundError):
+        await service.list_tasks(
+            project.id,
+            current_user,
+            page=1,
+            page_size=20,
+        )
+
+    assert task_repo.list_calls == []

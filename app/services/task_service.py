@@ -12,13 +12,17 @@ from app.core.exceptions import (
     PermissionDeniedError,
     TaskAssigneeNotWorkspaceMemberError,
 )
+from app.models.project import Project
 from app.models.task import Task
 from app.models.user import User
 from app.repositories.project_repository import ProjectRepository
-from app.repositories.task_repository import TaskCreateData, TaskRepository
+from app.repositories.task_repository import (
+    TaskCreateData,
+    TaskRepository,
+)
 from app.repositories.user_repository import UserRepository
-from app.repositories.workspace_repository import WorkspaceRepository
-from app.schemas.task import TaskCreate
+from app.repositories.workspace_repository import WorkspaceAccess, WorkspaceRepository
+from app.schemas.task import TaskCreate, TaskPageResponse, TaskResponse
 
 
 class TaskService:
@@ -34,22 +38,33 @@ class TaskService:
         self.workspace_repo = workspace_repo
         self.user_repo = user_repo
 
-    async def create_task(
+    async def _get_project_access(
         self,
         project_id: UUID,
-        current_user: User,
-        payload: TaskCreate,
-    ) -> Task:
+        user_id: UUID,
+    ) -> tuple[Project, WorkspaceAccess]:
         project = await self.project_repo.get_by_id(project_id)
         if project is None:
             raise EntityNotFoundError("Project", project_id)
 
         access = await self.workspace_repo.get_accessible_by_id(
             project.workspace_id,
-            current_user.id,
+            user_id,
         )
         if access is None:
             raise EntityNotFoundError("Project", project_id)
+        return project, access
+
+    async def create_task(
+        self,
+        project_id: UUID,
+        current_user: User,
+        payload: TaskCreate,
+    ) -> Task:
+        project, access = await self._get_project_access(
+            project_id,
+            current_user.id,
+        )
         if access.role not in {
             WorkspaceAccessRole.OWNER,
             WorkspaceAccessRole.EDITOR,
@@ -97,4 +112,27 @@ class TaskService:
                 priority=payload.priority,
                 due_date=payload.due_date,
             )
+        )
+
+    async def list_tasks(
+        self,
+        project_id: UUID,
+        current_user: User,
+        *,
+        page: int,
+        page_size: int,
+    ) -> TaskPageResponse:
+        await self._get_project_access(project_id, current_user.id)
+
+        result = await self.task_repo.list_by_project(
+            project_id,
+            offset=(page - 1) * page_size,
+            limit=page_size,
+        )
+        return TaskPageResponse(
+            items=[TaskResponse.model_validate(task) for task in result.items],
+            page=page,
+            page_size=page_size,
+            total=result.total,
+            total_pages=(result.total + page_size - 1) // page_size,
         )

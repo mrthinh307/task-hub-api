@@ -47,3 +47,11 @@ class TaskResponse(BaseModel):
     updated_at: datetime
 
     model_config = ConfigDict(from_attributes=True)
+
+
+class TaskPageResponse(BaseModel):
+    items: list[TaskResponse]
+    page: int
+    page_size: int
+    total: int
+    total_pages: int

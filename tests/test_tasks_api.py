@@ -14,12 +14,20 @@ from app.core.exceptions import (
 from app.main import create_app
 from app.models.task import Task
 from app.models.user import User
-from app.schemas.task import TaskCreate
+from app.schemas.task import TaskCreate, TaskPageResponse, TaskResponse
 
 
 class FakeTaskService:
     def __init__(self) -> None:
         self.calls: list[tuple[UUID, User, TaskCreate]] = []
+        self.list_calls: list[tuple[UUID, User, int, int]] = []
+        self.list_result = TaskPageResponse(
+            items=[],
+            page=1,
+            page_size=20,
+            total=0,
+            total_pages=0,
+        )
         self.error: Exception | None = None
 
     async def create_task(
@@ -46,6 +54,19 @@ class FakeTaskService:
             created_at=now,
             updated_at=now,
         )
+
+    async def list_tasks(
+        self,
+        project_id: UUID,
+        current_user: User,
+        *,
+        page: int,
+        page_size: int,
+    ) -> TaskPageResponse:
+        self.list_calls.append((project_id, current_user, page, page_size))
+        if self.error is not None:
+            raise self.error
+        return self.list_result
 
 
 def make_user() -> User:
@@ -219,3 +240,123 @@ def test_create_task_maps_domain_errors(
     )
 
     assert response.status_code == expected_status
+
+
+def test_list_tasks_returns_default_paginated_response() -> None:
+    current_user = make_user()
+    service = FakeTaskService()
+    client = create_authenticated_client(current_user, service)
+    project_id = uuid4()
+    now = datetime.now(UTC)
+    task = Task(
+        id=uuid4(),
+        project_id=project_id,
+        assignee_id=None,
+        created_by=current_user.id,
+        title="Newest task",
+        description=None,
+        status=TaskStatus.TODO,
+        priority=TaskPriority.MEDIUM,
+        due_date=None,
+        created_at=now,
+        updated_at=now,
+    )
+    service.list_result = TaskPageResponse(
+        items=[TaskResponse.model_validate(task)],
+        page=1,
+        page_size=20,
+        total=1,
+        total_pages=1,
+    )
+
+    response = client.get(f"/api/v1/projects/{project_id}/tasks")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["items"][0]["id"] == str(task.id)
+    assert body["items"][0]["title"] == "Newest task"
+    assert body["page"] == 1
+    assert body["page_size"] == 20
+    assert body["total"] == 1
+    assert body["total_pages"] == 1
+    assert service.list_calls == [(project_id, current_user, 1, 20)]
+
+
+def test_list_tasks_forwards_custom_pagination() -> None:
+    current_user = make_user()
+    service = FakeTaskService()
+    service.list_result = TaskPageResponse(
+        items=[],
+        page=3,
+        page_size=5,
+        total=11,
+        total_pages=3,
+    )
+    client = create_authenticated_client(current_user, service)
+    project_id = uuid4()
+
+    response = client.get(
+        f"/api/v1/projects/{project_id}/tasks",
+        params={"page": 3, "page_size": 5},
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "items": [],
+        "page": 3,
+        "page_size": 5,
+        "total": 11,
+        "total_pages": 3,
+    }
+    assert service.list_calls == [(project_id, current_user, 3, 5)]
+
+
+@pytest.mark.parametrize(
+    "params",
+    [
+        {"page": 0},
+        {"page_size": 0},
+        {"page_size": 101},
+        {"page": "invalid"},
+    ],
+)
+def test_list_tasks_rejects_invalid_pagination(
+    params: dict[str, object],
+) -> None:
+    service = FakeTaskService()
+    client = create_authenticated_client(make_user(), service)
+
+    response = client.get(
+        f"/api/v1/projects/{uuid4()}/tasks",
+        params=params,
+    )
+
+    assert response.status_code == 422
+    assert service.list_calls == []
+
+
+def test_list_tasks_requires_authentication() -> None:
+    app = create_app()
+    service = FakeTaskService()
+    app.dependency_overrides[get_task_service] = lambda: service
+    client = TestClient(app)
+
+    response = client.get(f"/api/v1/projects/{uuid4()}/tasks")
+
+    assert response.status_code == 401
+    assert service.list_calls == []
+
+
+def test_list_tasks_returns_not_found_for_inaccessible_project() -> None:
+    service = FakeTaskService()
+    project_id = uuid4()
+    service.error = EntityNotFoundError("Project", project_id)
+    client = create_authenticated_client(make_user(), service)
+
+    response = client.get(f"/api/v1/projects/{project_id}/tasks")
+
+    assert response.status_code == 404
+    assert response.json()["error"]["details"] == {
+        "entity": "Project",
+        "id": str(project_id),
+    }
