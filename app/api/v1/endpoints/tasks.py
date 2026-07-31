@@ -15,7 +15,7 @@ from app.schemas.task import TaskCreate, TaskFilters, TaskPageResponse, TaskResp
 from app.services.task_service import TaskService
 
 router = APIRouter(prefix="/tasks", tags=["Tasks"])
-project_router = APIRouter(
+project_task_router = APIRouter(
     prefix="/projects/{project_id}/tasks",
     tags=["Tasks"],
 )
@@ -48,14 +48,14 @@ def get_task_filters(
         raise RequestValidationError(errors) from exc
 
 
-@project_router.get(
+@project_task_router.get(
     "",
     response_model=TaskPageResponse,
     responses={
         status.HTTP_401_UNAUTHORIZED: {"model": ErrorResponse},
         status.HTTP_403_FORBIDDEN: {"model": ErrorResponse},
         status.HTTP_404_NOT_FOUND: {"model": ErrorResponse},
-        status.HTTP_422_UNPROCESSABLE_CONTENT: {"model": ErrorResponse},
+        status.HTTP_422_UNPROCESSABLE_ENTITY: {"model": ErrorResponse},
     },
 )
 async def list_tasks(
@@ -75,7 +75,7 @@ async def list_tasks(
     )
 
 
-@project_router.post(
+@project_task_router.post(
     "",
     response_model=TaskResponse,
     status_code=status.HTTP_201_CREATED,
@@ -84,7 +84,7 @@ async def list_tasks(
         status.HTTP_403_FORBIDDEN: {"model": ErrorResponse},
         status.HTTP_404_NOT_FOUND: {"model": ErrorResponse},
         status.HTTP_409_CONFLICT: {"model": ErrorResponse},
-        status.HTTP_422_UNPROCESSABLE_CONTENT: {"model": ErrorResponse},
+        status.HTTP_422_UNPROCESSABLE_ENTITY: {"model": ErrorResponse},
     },
 )
 async def create_task(
