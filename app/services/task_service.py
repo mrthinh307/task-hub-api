@@ -1,5 +1,7 @@
+from functools import partial
 from uuid import UUID
 
+from app.cache.task_list_cache import TaskListCache
 from app.core.enums import (
     ProjectStatus,
     TaskStatus,
@@ -12,6 +14,7 @@ from app.core.exceptions import (
     PermissionDeniedError,
     TaskAssigneeNotWorkspaceMemberError,
 )
+from app.db.post_commit import PostCommitActions
 from app.models.project import Project
 from app.models.task import Task
 from app.models.user import User
@@ -33,11 +36,15 @@ class TaskService:
         project_repo: ProjectRepository,
         workspace_repo: WorkspaceRepository,
         user_repo: UserRepository,
+        task_cache: TaskListCache,
+        post_commit: PostCommitActions,
     ) -> None:
         self.task_repo = task_repo
         self.project_repo = project_repo
         self.workspace_repo = workspace_repo
         self.user_repo = user_repo
+        self.task_cache = task_cache
+        self.post_commit = post_commit
 
     async def _get_project_access(
         self,
@@ -102,7 +109,7 @@ class TaskService:
                     assignee_id,
                 )
 
-        return await self.task_repo.create(
+        task = await self.task_repo.create(
             TaskCreateData(
                 project_id=project_id,
                 assignee_id=assignee_id,
@@ -114,6 +121,8 @@ class TaskService:
                 due_date=payload.due_date,
             )
         )
+        self.post_commit.add(partial(self.task_cache.invalidate_project, project_id))
+        return task
 
     async def list_tasks(
         self,
@@ -125,6 +134,15 @@ class TaskService:
         filters: TaskFilters,
     ) -> TaskPageResponse:
         await self._get_project_access(project_id, current_user.id)
+
+        cache_lookup = await self.task_cache.get(
+            project_id,
+            page=page,
+            page_size=page_size,
+            filters=filters,
+        )
+        if cache_lookup is not None and cache_lookup.response is not None:
+            return cache_lookup.response
 
         result = await self.task_repo.list_by_project(
             project_id,
@@ -140,10 +158,20 @@ class TaskService:
             offset=(page - 1) * page_size,
             limit=page_size,
         )
-        return TaskPageResponse(
+        response = TaskPageResponse(
             items=[TaskResponse.model_validate(task) for task in result.items],
             page=page,
             page_size=page_size,
             total=result.total,
             total_pages=(result.total + page_size - 1) // page_size,
         )
+        if cache_lookup is not None:
+            await self.task_cache.set(
+                project_id,
+                page=page,
+                page_size=page_size,
+                filters=filters,
+                version=cache_lookup.version,
+                response=response,
+            )
+        return response

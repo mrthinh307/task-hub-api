@@ -1,11 +1,14 @@
+import redis.asyncio as aioredis
 from fastapi import Depends, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.cache.task_list_cache import RedisTaskListCache
 from app.core.config import settings
 from app.core.enums import TokenType
 from app.core.exceptions import InactiveUserError, InvalidTokenError
 from app.core.security import decode_token
-from app.db.session import get_db
+from app.db.post_commit import PostCommitActions, get_post_commit_actions
+from app.db.session import get_db, get_redis
 from app.models.user import User
 from app.repositories.auth_repository import AuthRepository
 from app.repositories.project_repository import ProjectRepository
@@ -73,6 +76,15 @@ def get_task_repository(
     return TaskRepository(session)
 
 
+def get_task_list_cache(
+    redis: aioredis.Redis = Depends(get_redis),
+) -> RedisTaskListCache:
+    return RedisTaskListCache(
+        redis,
+        ttl_seconds=settings.TASK_LIST_CACHE_TTL_SECONDS,
+    )
+
+
 def get_project_service(
     project_repo: ProjectRepository = Depends(get_project_repository),
     workspace_repo: WorkspaceRepository = Depends(get_workspace_repository),
@@ -85,8 +97,17 @@ def get_task_service(
     project_repo: ProjectRepository = Depends(get_project_repository),
     workspace_repo: WorkspaceRepository = Depends(get_workspace_repository),
     user_repo: UserRepository = Depends(get_user_repository),
+    task_cache: RedisTaskListCache = Depends(get_task_list_cache),
+    post_commit: PostCommitActions = Depends(get_post_commit_actions),
 ) -> TaskService:
-    return TaskService(task_repo, project_repo, workspace_repo, user_repo)
+    return TaskService(
+        task_repo,
+        project_repo,
+        workspace_repo,
+        user_repo,
+        task_cache,
+        post_commit,
+    )
 
 
 def get_workspace_service(

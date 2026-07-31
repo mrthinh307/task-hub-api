@@ -3,6 +3,7 @@ from uuid import UUID, uuid4
 
 import pytest
 
+from app.cache.task_list_cache import TaskListCacheLookup
 from app.core.enums import (
     ProjectStatus,
     TaskPriority,
@@ -17,6 +18,7 @@ from app.core.exceptions import (
     PermissionDeniedError,
     TaskAssigneeNotWorkspaceMemberError,
 )
+from app.db.post_commit import PostCommitActions
 from app.models.project import Project
 from app.models.task import Task
 from app.models.user import User
@@ -27,7 +29,7 @@ from app.repositories.task_repository import (
     TaskListResult,
 )
 from app.repositories.workspace_repository import WorkspaceAccess
-from app.schemas.task import TaskCreate, TaskFilters
+from app.schemas.task import TaskCreate, TaskFilters, TaskPageResponse
 from app.services.task_service import TaskService
 
 
@@ -105,6 +107,45 @@ class FakeUserRepository:
         return self.users.get(user_id)
 
 
+class FakeTaskListCache:
+    def __init__(self) -> None:
+        self.cached_response: TaskPageResponse | None = None
+        self.get_calls: list[tuple[UUID, int, int, TaskFilters]] = []
+        self.set_calls: list[
+            tuple[UUID, int, int, TaskFilters, str, TaskPageResponse]
+        ] = []
+        self.invalidate_calls: list[UUID] = []
+
+    async def get(
+        self,
+        project_id: UUID,
+        *,
+        page: int,
+        page_size: int,
+        filters: TaskFilters,
+    ) -> TaskListCacheLookup:
+        self.get_calls.append((project_id, page, page_size, filters))
+        return TaskListCacheLookup(
+            version="0",
+            response=self.cached_response,
+        )
+
+    async def set(
+        self,
+        project_id: UUID,
+        *,
+        page: int,
+        page_size: int,
+        filters: TaskFilters,
+        version: str,
+        response: TaskPageResponse,
+    ) -> None:
+        self.set_calls.append((project_id, page, page_size, filters, version, response))
+
+    async def invalidate_project(self, project_id: UUID) -> None:
+        self.invalidate_calls.append(project_id)
+
+
 def make_user(*, active: bool = True) -> User:
     return User(
         id=uuid4(),
@@ -155,11 +196,14 @@ def make_service() -> tuple[
     project_repo = FakeProjectRepository()
     workspace_repo = FakeWorkspaceRepository()
     user_repo = FakeUserRepository()
+    task_cache = FakeTaskListCache()
     service = TaskService(
         task_repo,  # type: ignore[arg-type]
         project_repo,  # type: ignore[arg-type]
         workspace_repo,  # type: ignore[arg-type]
         user_repo,  # type: ignore[arg-type]
+        task_cache,
+        PostCommitActions(),
     )
     return service, task_repo, project_repo, workspace_repo, user_repo
 
@@ -232,6 +276,33 @@ async def test_create_task_allows_self_assignment_without_extra_lookup() -> None
     assert task_repo.create_calls[0].assignee_id == current_user.id
     assert user_repo.get_calls == []
     assert workspace_repo.get_calls == [(workspace.id, current_user.id)]
+
+
+@pytest.mark.asyncio
+async def test_create_task_invalidates_cache_only_after_commit() -> None:
+    service, _, project_repo, workspace_repo, _ = make_service()
+    current_user = make_user()
+    workspace = make_workspace(owner_id=current_user.id)
+    project = make_project(workspace.id)
+    project_repo.projects[project.id] = project
+    workspace_repo.access_by_user[current_user.id] = WorkspaceAccess(
+        workspace=workspace,
+        role=WorkspaceAccessRole.OWNER,
+    )
+    task_cache = service.task_cache
+    assert isinstance(task_cache, FakeTaskListCache)
+
+    await service.create_task(
+        project.id,
+        current_user,
+        TaskCreate(title="Invalidate after commit"),
+    )
+
+    assert task_cache.invalidate_calls == []
+
+    await service.post_commit.run()
+
+    assert task_cache.invalidate_calls == [project.id]
 
 
 @pytest.mark.asyncio
@@ -467,9 +538,7 @@ async def test_list_tasks_returns_paginated_tasks_for_all_workspace_roles(
     assert result.page_size == 10
     assert result.total == 21
     assert result.total_pages == 3
-    assert task_repo.list_calls == [
-        (project.id, TaskFilterData(), 10, 10)
-    ]
+    assert task_repo.list_calls == [(project.id, TaskFilterData(), 10, 10)]
 
 
 @pytest.mark.asyncio
@@ -494,9 +563,7 @@ async def test_list_tasks_allows_archived_project() -> None:
 
     assert result.items == []
     assert result.total_pages == 0
-    assert task_repo.list_calls == [
-        (project.id, TaskFilterData(), 0, 20)
-    ]
+    assert task_repo.list_calls == [(project.id, TaskFilterData(), 0, 20)]
 
 
 @pytest.mark.asyncio
@@ -516,6 +583,46 @@ async def test_list_tasks_hides_missing_or_inaccessible_project() -> None:
         )
 
     assert task_repo.list_calls == []
+    task_cache = service.task_cache
+    assert isinstance(task_cache, FakeTaskListCache)
+    assert task_cache.get_calls == []
+
+
+@pytest.mark.asyncio
+async def test_list_tasks_returns_cached_page_without_querying_repository() -> None:
+    service, task_repo, project_repo, workspace_repo, _ = make_service()
+    current_user = make_user()
+    workspace = make_workspace(owner_id=current_user.id)
+    project = make_project(workspace.id)
+    project_repo.projects[project.id] = project
+    workspace_repo.access_by_user[current_user.id] = WorkspaceAccess(
+        workspace=workspace,
+        role=WorkspaceAccessRole.VIEWER,
+    )
+    filters = TaskFilters(priority=TaskPriority.HIGH)
+    cached = TaskPageResponse(
+        items=[],
+        page=2,
+        page_size=10,
+        total=0,
+        total_pages=0,
+    )
+    task_cache = service.task_cache
+    assert isinstance(task_cache, FakeTaskListCache)
+    task_cache.cached_response = cached
+
+    result = await service.list_tasks(
+        project.id,
+        current_user,
+        page=2,
+        page_size=10,
+        filters=filters,
+    )
+
+    assert result is cached
+    assert task_repo.list_calls == []
+    assert task_cache.get_calls == [(project.id, 2, 10, filters)]
+    assert task_cache.set_calls == []
 
 
 @pytest.mark.asyncio
@@ -542,7 +649,7 @@ async def test_list_tasks_forwards_filters_to_repository() -> None:
         due_to=due_to,
     )
 
-    await service.list_tasks(
+    response = await service.list_tasks(
         project.id,
         current_user,
         page=1,
@@ -565,3 +672,7 @@ async def test_list_tasks_forwards_filters_to_repository() -> None:
             20,
         )
     ]
+    task_cache = service.task_cache
+    assert isinstance(task_cache, FakeTaskListCache)
+    assert task_cache.get_calls == [(project.id, 1, 20, filters)]
+    assert task_cache.set_calls == [(project.id, 1, 20, filters, "0", response)]
