@@ -3,6 +3,7 @@ import asyncio
 import pytest
 
 from app.db import session as db_session
+from app.db.post_commit import PostCommitActions
 
 
 class FakeRedisClient:
@@ -20,6 +21,40 @@ class FakeRedisClient:
 
     async def aclose(self) -> None:
         self.close_calls += 1
+
+
+class FakeDatabaseSession:
+    def __init__(
+        self,
+        events: list[str],
+        *,
+        commit_error: Exception | None = None,
+    ) -> None:
+        self.events = events
+        self.commit_error = commit_error
+
+    async def __aenter__(self) -> "FakeDatabaseSession":
+        self.events.append("enter")
+        return self
+
+    async def __aexit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc: BaseException | None,
+        traceback: object,
+    ) -> None:
+        self.events.append("exit")
+
+    async def commit(self) -> None:
+        self.events.append("commit")
+        if self.commit_error is not None:
+            raise self.commit_error
+
+    async def rollback(self) -> None:
+        self.events.append("rollback")
+
+    async def close(self) -> None:
+        self.events.append("close")
 
 
 @pytest.mark.asyncio
@@ -103,3 +138,84 @@ async def test_concurrent_get_redis_calls_create_one_client(monkeypatch) -> None
 
     assert len(created_clients) == 1
     assert all(client is created_clients[0] for client in clients)
+
+
+@pytest.mark.asyncio
+async def test_get_db_runs_post_commit_actions_after_session_closes(
+    monkeypatch,
+) -> None:
+    events: list[str] = []
+    fake_session = FakeDatabaseSession(events)
+    monkeypatch.setattr(
+        db_session,
+        "AsyncSessionLocal",
+        lambda: fake_session,
+    )
+    actions = PostCommitActions()
+
+    async def callback() -> None:
+        events.append("callback")
+
+    actions.add(callback)
+    dependency = db_session.get_db(actions)
+
+    assert await anext(dependency) is fake_session
+    with pytest.raises(StopAsyncIteration):
+        await anext(dependency)
+
+    assert events == ["enter", "commit", "close", "exit", "callback"]
+
+
+@pytest.mark.asyncio
+async def test_get_db_does_not_run_post_commit_actions_after_rollback(
+    monkeypatch,
+) -> None:
+    events: list[str] = []
+    fake_session = FakeDatabaseSession(events)
+    monkeypatch.setattr(
+        db_session,
+        "AsyncSessionLocal",
+        lambda: fake_session,
+    )
+    actions = PostCommitActions()
+
+    async def callback() -> None:
+        events.append("callback")
+
+    actions.add(callback)
+    dependency = db_session.get_db(actions)
+    await anext(dependency)
+
+    with pytest.raises(RuntimeError, match="request failed"):
+        await dependency.athrow(RuntimeError("request failed"))
+
+    assert events == ["enter", "rollback", "close", "exit"]
+
+
+@pytest.mark.asyncio
+async def test_get_db_does_not_run_post_commit_actions_when_commit_fails(
+    monkeypatch,
+) -> None:
+    events: list[str] = []
+    fake_session = FakeDatabaseSession(
+        events,
+        commit_error=RuntimeError("commit failed"),
+    )
+    monkeypatch.setattr(
+        db_session,
+        "AsyncSessionLocal",
+        lambda: fake_session,
+    )
+    actions = PostCommitActions()
+
+    async def callback() -> None:
+        events.append("callback")
+
+    actions.add(callback)
+    dependency = db_session.get_db(actions)
+    await anext(dependency)
+
+    with pytest.raises(RuntimeError, match="commit failed"):
+        await anext(dependency)
+
+    assert events == ["enter", "commit", "rollback", "close", "exit"]

@@ -1,18 +1,25 @@
+import redis.asyncio as aioredis
 from fastapi import Depends, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.cache.task_list_cache import RedisTaskListCache
 from app.core.config import settings
 from app.core.enums import TokenType
 from app.core.exceptions import InactiveUserError, InvalidTokenError
 from app.core.security import decode_token
-from app.db.session import get_db
+from app.db.post_commit import PostCommitActions, get_post_commit_actions
+from app.db.session import get_db, get_redis
 from app.models.user import User
 from app.repositories.auth_repository import AuthRepository
+from app.repositories.project_repository import ProjectRepository
 from app.repositories.refresh_session_repository import RefreshSessionRepository
+from app.repositories.task_repository import TaskRepository
 from app.repositories.user_repository import UserRepository
 from app.repositories.workspace_member_repository import WorkspaceMemberRepository
 from app.repositories.workspace_repository import WorkspaceRepository
 from app.services.auth_service import AuthService
+from app.services.project_service import ProjectService
+from app.services.task_service import TaskService
 from app.services.user_service import UserService
 from app.services.workspace_membership_service import WorkspaceMembershipService
 from app.services.workspace_service import WorkspaceService
@@ -55,6 +62,52 @@ def get_workspace_repository(
     session: AsyncSession = Depends(get_db),
 ) -> WorkspaceRepository:
     return WorkspaceRepository(session)
+
+
+def get_project_repository(
+    session: AsyncSession = Depends(get_db),
+) -> ProjectRepository:
+    return ProjectRepository(session)
+
+
+def get_task_repository(
+    session: AsyncSession = Depends(get_db),
+) -> TaskRepository:
+    return TaskRepository(session)
+
+
+def get_task_list_cache(
+    redis: aioredis.Redis = Depends(get_redis),
+) -> RedisTaskListCache:
+    return RedisTaskListCache(
+        redis,
+        ttl_seconds=settings.TASK_LIST_CACHE_TTL_SECONDS,
+    )
+
+
+def get_project_service(
+    project_repo: ProjectRepository = Depends(get_project_repository),
+    workspace_repo: WorkspaceRepository = Depends(get_workspace_repository),
+) -> ProjectService:
+    return ProjectService(project_repo, workspace_repo)
+
+
+def get_task_service(
+    task_repo: TaskRepository = Depends(get_task_repository),
+    project_repo: ProjectRepository = Depends(get_project_repository),
+    workspace_repo: WorkspaceRepository = Depends(get_workspace_repository),
+    user_repo: UserRepository = Depends(get_user_repository),
+    task_cache: RedisTaskListCache = Depends(get_task_list_cache),
+    post_commit: PostCommitActions = Depends(get_post_commit_actions),
+) -> TaskService:
+    return TaskService(
+        task_repo,
+        project_repo,
+        workspace_repo,
+        user_repo,
+        task_cache,
+        post_commit,
+    )
 
 
 def get_workspace_service(

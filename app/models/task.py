@@ -2,7 +2,7 @@ import uuid
 from datetime import datetime
 from typing import TYPE_CHECKING
 
-from sqlalchemy import DateTime, ForeignKey, String, Text
+from sqlalchemy import DateTime, ForeignKey, Index, String, Text
 from sqlalchemy import Enum as SQLEnum
 from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -34,6 +34,14 @@ class TaskLabel(Base):
 
 class Task(Base):
     __tablename__ = "tasks"
+    __table_args__ = (
+        Index(
+            "ix_tasks_project_created_at_id",
+            "project_id",
+            "created_at",
+            "id",
+        ),
+    )
 
     project_id: Mapped[uuid.UUID] = mapped_column(
         PG_UUID(as_uuid=True),

@@ -51,6 +51,39 @@ class EntityAlreadyExistsError(ConflictError):
         )
 
 
+class ArchivedProjectError(ConflictError):
+    def __init__(self, project_id: Any) -> None:
+        super().__init__(
+            message="Archived projects cannot accept new tasks",
+            details={"project_id": str(project_id)},
+        )
+
+
+class InactiveTaskAssigneeError(ConflictError):
+    def __init__(self, user_id: Any) -> None:
+        super().__init__(
+            message="Inactive users cannot be assigned to tasks",
+            details={"user_id": str(user_id)},
+        )
+
+
+class TaskAssigneeNotWorkspaceMemberError(ConflictError):
+    def __init__(
+        self,
+        project_id: Any,
+        workspace_id: Any,
+        user_id: Any,
+    ) -> None:
+        super().__init__(
+            message="Task assignee must belong to the project's workspace",
+            details={
+                "project_id": str(project_id),
+                "workspace_id": str(workspace_id),
+                "user_id": str(user_id),
+            },
+        )
+
+
 class WorkspaceInviteeNotFoundError(ResourceNotFoundError):
     def __init__(self, email: str) -> None:
         super().__init__(

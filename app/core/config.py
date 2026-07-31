@@ -18,6 +18,7 @@ class Settings(BaseSettings):
     REDIS_SOCKET_CONNECT_TIMEOUT: float = 2.0
     REDIS_SOCKET_TIMEOUT: float = 5.0
     REDIS_HEALTH_CHECK_INTERVAL: int = 30
+    TASK_LIST_CACHE_TTL_SECONDS: int = Field(default=60, ge=1, le=3600)
 
     # Security
     SECRET_KEY: str = "dev-secret-key-change-in-production"

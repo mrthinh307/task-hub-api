@@ -1,11 +1,14 @@
 import asyncio
 from collections.abc import AsyncGenerator
+from typing import Annotated
 
 import redis.asyncio as aioredis
+from fastapi import Depends
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from app.core.config import settings
 from app.core.logging import logger
+from app.db.post_commit import PostCommitActions, get_post_commit_actions
 
 # Create the SQLAlchemy async engine for PostgreSQL running in Docker.
 async_engine = create_async_engine(
@@ -72,7 +75,9 @@ async def close_redis() -> None:
         logger.info("Redis connection closed.")
 
 
-async def get_db() -> AsyncGenerator[AsyncSession, None]:
+async def get_db(
+    post_commit: Annotated[PostCommitActions, Depends(get_post_commit_actions)],
+) -> AsyncGenerator[AsyncSession, None]:
     """Dependency for providing asynchronous SQLAlchemy database sessions."""
     async with AsyncSessionLocal() as session:
         try:
@@ -83,6 +88,7 @@ async def get_db() -> AsyncGenerator[AsyncSession, None]:
             raise
         finally:
             await session.close()
+    await post_commit.run()
 
 
 async def get_redis() -> AsyncGenerator[aioredis.Redis, None]:

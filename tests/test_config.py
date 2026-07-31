@@ -1,3 +1,5 @@
+import pytest
+from pydantic import ValidationError
 from pydantic_settings import SettingsConfigDict
 
 from app.core.config import Settings
@@ -29,3 +31,24 @@ def test_local_development_can_disable_secure_cookies(monkeypatch) -> None:
     settings = SettingsWithoutDotenv(DATABASE_URL=TEST_DATABASE_URL)
 
     assert settings.COOKIE_SECURE is False
+
+
+def test_task_list_cache_uses_bounded_configurable_ttl() -> None:
+    settings = SettingsWithoutDotenv(DATABASE_URL=TEST_DATABASE_URL)
+
+    assert settings.TASK_LIST_CACHE_TTL_SECONDS == 60
+
+    configured = SettingsWithoutDotenv(
+        DATABASE_URL=TEST_DATABASE_URL,
+        TASK_LIST_CACHE_TTL_SECONDS=120,
+    )
+
+    assert configured.TASK_LIST_CACHE_TTL_SECONDS == 120
+
+
+def test_task_list_cache_rejects_invalid_ttl() -> None:
+    with pytest.raises(ValidationError):
+        SettingsWithoutDotenv(
+            DATABASE_URL=TEST_DATABASE_URL,
+            TASK_LIST_CACHE_TTL_SECONDS=0,
+        )
