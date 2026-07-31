@@ -21,16 +21,20 @@ from app.models.project import Project
 from app.models.task import Task
 from app.models.user import User
 from app.models.workspace import Workspace
-from app.repositories.task_repository import TaskCreateData, TaskListResult
+from app.repositories.task_repository import (
+    TaskCreateData,
+    TaskFilterData,
+    TaskListResult,
+)
 from app.repositories.workspace_repository import WorkspaceAccess
-from app.schemas.task import TaskCreate
+from app.schemas.task import TaskCreate, TaskFilters
 from app.services.task_service import TaskService
 
 
 class FakeTaskRepository:
     def __init__(self) -> None:
         self.create_calls: list[TaskCreateData] = []
-        self.list_calls: list[tuple[UUID, int, int]] = []
+        self.list_calls: list[tuple[UUID, TaskFilterData, int, int]] = []
         self.list_result = TaskListResult(items=[], total=0)
 
     async def create(
@@ -59,10 +63,11 @@ class FakeTaskRepository:
         self,
         project_id: UUID,
         *,
+        filters: TaskFilterData,
         offset: int,
         limit: int,
     ) -> TaskListResult:
-        self.list_calls.append((project_id, offset, limit))
+        self.list_calls.append((project_id, filters, offset, limit))
         return self.list_result
 
 
@@ -454,6 +459,7 @@ async def test_list_tasks_returns_paginated_tasks_for_all_workspace_roles(
         current_user,
         page=2,
         page_size=10,
+        filters=TaskFilters(),
     )
 
     assert result.items[0].id == task.id
@@ -461,7 +467,9 @@ async def test_list_tasks_returns_paginated_tasks_for_all_workspace_roles(
     assert result.page_size == 10
     assert result.total == 21
     assert result.total_pages == 3
-    assert task_repo.list_calls == [(project.id, 10, 10)]
+    assert task_repo.list_calls == [
+        (project.id, TaskFilterData(), 10, 10)
+    ]
 
 
 @pytest.mark.asyncio
@@ -481,11 +489,14 @@ async def test_list_tasks_allows_archived_project() -> None:
         current_user,
         page=1,
         page_size=20,
+        filters=TaskFilters(),
     )
 
     assert result.items == []
     assert result.total_pages == 0
-    assert task_repo.list_calls == [(project.id, 0, 20)]
+    assert task_repo.list_calls == [
+        (project.id, TaskFilterData(), 0, 20)
+    ]
 
 
 @pytest.mark.asyncio
@@ -501,6 +512,56 @@ async def test_list_tasks_hides_missing_or_inaccessible_project() -> None:
             current_user,
             page=1,
             page_size=20,
+            filters=TaskFilters(),
         )
 
     assert task_repo.list_calls == []
+
+
+@pytest.mark.asyncio
+async def test_list_tasks_forwards_filters_to_repository() -> None:
+    service, task_repo, project_repo, workspace_repo, _ = make_service()
+    current_user = make_user()
+    workspace = make_workspace(owner_id=current_user.id)
+    project = make_project(workspace.id)
+    project_repo.projects[project.id] = project
+    workspace_repo.access_by_user[current_user.id] = WorkspaceAccess(
+        workspace=workspace,
+        role=WorkspaceAccessRole.OWNER,
+    )
+    assignee_id = uuid4()
+    creator_id = uuid4()
+    due_from = datetime(2026, 8, 1, tzinfo=UTC)
+    due_to = datetime(2026, 8, 31, 23, 59, tzinfo=UTC)
+    filters = TaskFilters(
+        status=TaskStatus.IN_PROGRESS,
+        priority=TaskPriority.HIGH,
+        assignee_id=assignee_id,
+        created_by=creator_id,
+        due_from=due_from,
+        due_to=due_to,
+    )
+
+    await service.list_tasks(
+        project.id,
+        current_user,
+        page=1,
+        page_size=20,
+        filters=filters,
+    )
+
+    assert task_repo.list_calls == [
+        (
+            project.id,
+            TaskFilterData(
+                status=TaskStatus.IN_PROGRESS,
+                priority=TaskPriority.HIGH,
+                assignee_id=assignee_id,
+                created_by=creator_id,
+                due_from=due_from,
+                due_to=due_to,
+            ),
+            0,
+            20,
+        )
+    ]

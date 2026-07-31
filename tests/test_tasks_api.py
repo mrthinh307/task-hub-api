@@ -14,13 +14,18 @@ from app.core.exceptions import (
 from app.main import create_app
 from app.models.task import Task
 from app.models.user import User
-from app.schemas.task import TaskCreate, TaskPageResponse, TaskResponse
+from app.schemas.task import (
+    TaskCreate,
+    TaskFilters,
+    TaskPageResponse,
+    TaskResponse,
+)
 
 
 class FakeTaskService:
     def __init__(self) -> None:
         self.calls: list[tuple[UUID, User, TaskCreate]] = []
-        self.list_calls: list[tuple[UUID, User, int, int]] = []
+        self.list_calls: list[tuple[UUID, User, int, int, TaskFilters]] = []
         self.list_result = TaskPageResponse(
             items=[],
             page=1,
@@ -62,8 +67,11 @@ class FakeTaskService:
         *,
         page: int,
         page_size: int,
+        filters: TaskFilters,
     ) -> TaskPageResponse:
-        self.list_calls.append((project_id, current_user, page, page_size))
+        self.list_calls.append(
+            (project_id, current_user, page, page_size, filters)
+        )
         if self.error is not None:
             raise self.error
         return self.list_result
@@ -279,7 +287,9 @@ def test_list_tasks_returns_default_paginated_response() -> None:
     assert body["page_size"] == 20
     assert body["total"] == 1
     assert body["total_pages"] == 1
-    assert service.list_calls == [(project_id, current_user, 1, 20)]
+    assert service.list_calls == [
+        (project_id, current_user, 1, 20, TaskFilters())
+    ]
 
 
 def test_list_tasks_forwards_custom_pagination() -> None:
@@ -308,7 +318,9 @@ def test_list_tasks_forwards_custom_pagination() -> None:
         "total": 11,
         "total_pages": 3,
     }
-    assert service.list_calls == [(project_id, current_user, 3, 5)]
+    assert service.list_calls == [
+        (project_id, current_user, 3, 5, TaskFilters())
+    ]
 
 
 @pytest.mark.parametrize(
@@ -360,3 +372,99 @@ def test_list_tasks_returns_not_found_for_inaccessible_project() -> None:
         "entity": "Project",
         "id": str(project_id),
     }
+
+
+def test_list_tasks_forwards_filters() -> None:
+    current_user = make_user()
+    service = FakeTaskService()
+    client = create_authenticated_client(current_user, service)
+    project_id = uuid4()
+    assignee_id = uuid4()
+    creator_id = uuid4()
+
+    response = client.get(
+        f"/api/v1/projects/{project_id}/tasks",
+        params={
+            "status": "IN_PROGRESS",
+            "priority": "HIGH",
+            "assignee_id": str(assignee_id),
+            "created_by": str(creator_id),
+            "due_from": "2026-08-01T00:00:00Z",
+            "due_to": "2026-08-31T23:59:00Z",
+        },
+    )
+
+    assert response.status_code == 200
+    assert service.list_calls == [
+        (
+            project_id,
+            current_user,
+            1,
+            20,
+            TaskFilters(
+                status=TaskStatus.IN_PROGRESS,
+                priority=TaskPriority.HIGH,
+                assignee_id=assignee_id,
+                created_by=creator_id,
+                due_from=datetime(2026, 8, 1, tzinfo=UTC),
+                due_to=datetime(2026, 8, 31, 23, 59, tzinfo=UTC),
+            ),
+        )
+    ]
+
+
+def test_list_tasks_forwards_unassigned_filter() -> None:
+    current_user = make_user()
+    service = FakeTaskService()
+    client = create_authenticated_client(current_user, service)
+    project_id = uuid4()
+
+    response = client.get(
+        f"/api/v1/projects/{project_id}/tasks",
+        params={"unassigned": "true"},
+    )
+
+    assert response.status_code == 200
+    assert service.list_calls == [
+        (
+            project_id,
+            current_user,
+            1,
+            20,
+            TaskFilters(unassigned=True),
+        )
+    ]
+
+
+@pytest.mark.parametrize(
+    "params",
+    [
+        {"status": "INVALID"},
+        {"priority": "INVALID"},
+        {"assignee_id": "not-a-uuid"},
+        {"created_by": "not-a-uuid"},
+        {"due_from": "2026-08-01T00:00:00"},
+        {"due_to": "2026-08-31T23:59:00"},
+        {
+            "assignee_id": str(uuid4()),
+            "unassigned": "true",
+        },
+        {
+            "due_from": "2026-09-01T00:00:00Z",
+            "due_to": "2026-08-01T00:00:00Z",
+        },
+    ],
+)
+def test_list_tasks_rejects_invalid_filters(
+    params: dict[str, object],
+) -> None:
+    service = FakeTaskService()
+    client = create_authenticated_client(make_user(), service)
+
+    response = client.get(
+        f"/api/v1/projects/{uuid4()}/tasks",
+        params=params,
+    )
+
+    assert response.status_code == 422
+    assert service.list_calls == []

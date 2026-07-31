@@ -1,7 +1,8 @@
 from datetime import datetime
+from typing import Self
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from app.core.enums import TaskPriority, TaskStatus
 
@@ -55,3 +56,36 @@ class TaskPageResponse(BaseModel):
     page_size: int
     total: int
     total_pages: int
+
+
+class TaskFilters(BaseModel):
+    status: TaskStatus | None = None
+    priority: TaskPriority | None = None
+    assignee_id: UUID | None = None
+    unassigned: bool = False
+    created_by: UUID | None = None
+    due_from: datetime | None = None
+    due_to: datetime | None = None
+
+    @field_validator("due_from", "due_to")
+    @classmethod
+    def require_filter_timezone(cls, value: datetime | None) -> datetime | None:
+        if value is not None and (
+            value.tzinfo is None or value.utcoffset() is None
+        ):
+            raise ValueError("Task due-date filters must include a timezone")
+        return value
+
+    @model_validator(mode="after")
+    def validate_filter_combinations(self) -> Self:
+        if self.assignee_id is not None and self.unassigned:
+            raise ValueError(
+                "assignee_id and unassigned=true cannot be used together"
+            )
+        if (
+            self.due_from is not None
+            and self.due_to is not None
+            and self.due_from > self.due_to
+        ):
+            raise ValueError("due_from must be earlier than or equal to due_to")
+        return self

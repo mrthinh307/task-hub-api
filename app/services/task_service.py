@@ -18,11 +18,12 @@ from app.models.user import User
 from app.repositories.project_repository import ProjectRepository
 from app.repositories.task_repository import (
     TaskCreateData,
+    TaskFilterData,
     TaskRepository,
 )
 from app.repositories.user_repository import UserRepository
 from app.repositories.workspace_repository import WorkspaceAccess, WorkspaceRepository
-from app.schemas.task import TaskCreate, TaskPageResponse, TaskResponse
+from app.schemas.task import TaskCreate, TaskFilters, TaskPageResponse, TaskResponse
 
 
 class TaskService:
@@ -121,11 +122,21 @@ class TaskService:
         *,
         page: int,
         page_size: int,
+        filters: TaskFilters,
     ) -> TaskPageResponse:
         await self._get_project_access(project_id, current_user.id)
 
         result = await self.task_repo.list_by_project(
             project_id,
+            filters=TaskFilterData(
+                status=filters.status,
+                priority=filters.priority,
+                assignee_id=filters.assignee_id,
+                unassigned=filters.unassigned,
+                created_by=filters.created_by,
+                due_from=filters.due_from,
+                due_to=filters.due_to,
+            ),
             offset=(page - 1) * page_size,
             limit=page_size,
         )
