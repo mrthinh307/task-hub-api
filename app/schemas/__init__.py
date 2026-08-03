@@ -1,5 +1,6 @@
 from app.schemas.auth import AuthUserResponse, LoginRequest, RegisterRequest
 from app.schemas.errors import ErrorContent, ErrorResponse, ValidationErrorDetail
+from app.schemas.label import LabelCreate, LabelResponse, LabelUpdate
 from app.schemas.user import UserProfileResponse, UserUpdate
 from app.schemas.workspace import (
     WorkspaceCreate,
@@ -14,6 +15,9 @@ __all__ = [
     "AuthUserResponse",
     "ErrorContent",
     "ErrorResponse",
+    "LabelCreate",
+    "LabelResponse",
+    "LabelUpdate",
     "LoginRequest",
     "RegisterRequest",
     "UserProfileResponse",
