@@ -9,6 +9,7 @@ from app.core.enums import (
 )
 from app.core.exceptions import (
     ArchivedProjectError,
+    ArchivedTaskUpdateError,
     EntityNotFoundError,
     InactiveTaskAssigneeError,
     PermissionDeniedError,
@@ -23,10 +24,17 @@ from app.repositories.task_repository import (
     TaskCreateData,
     TaskFilterData,
     TaskRepository,
+    TaskUpdateData,
 )
 from app.repositories.user_repository import UserRepository
 from app.repositories.workspace_repository import WorkspaceAccess, WorkspaceRepository
-from app.schemas.task import TaskCreate, TaskFilters, TaskPageResponse, TaskResponse
+from app.schemas.task import (
+    TaskCreate,
+    TaskFilters,
+    TaskPageResponse,
+    TaskResponse,
+    TaskUpdate,
+)
 
 
 class TaskService:
@@ -63,6 +71,50 @@ class TaskService:
             raise EntityNotFoundError("Project", project_id)
         return project, access
 
+    async def _get_task_access(
+        self,
+        task_id: UUID,
+        user_id: UUID,
+    ) -> tuple[Task, Project, WorkspaceAccess]:
+        task = await self.task_repo.get_by_id(task_id)
+        if task is None:
+            raise EntityNotFoundError("Task", task_id)
+
+        try:
+            project, access = await self._get_project_access(
+                task.project_id,
+                user_id,
+            )
+        except EntityNotFoundError:
+            raise EntityNotFoundError("Task", task_id) from None
+        return task, project, access
+
+    async def _validate_assignee(
+        self,
+        project: Project,
+        current_user: User,
+        assignee_id: UUID | None,
+    ) -> None:
+        if assignee_id is None or assignee_id == current_user.id:
+            return
+
+        assignee = await self.user_repo.get_by_id(assignee_id)
+        if assignee is None:
+            raise EntityNotFoundError("User", assignee_id)
+        if not assignee.is_active:
+            raise InactiveTaskAssigneeError(assignee_id)
+
+        assignee_access = await self.workspace_repo.get_accessible_by_id(
+            project.workspace_id,
+            assignee_id,
+        )
+        if assignee_access is None:
+            raise TaskAssigneeNotWorkspaceMemberError(
+                project.id,
+                project.workspace_id,
+                assignee_id,
+            )
+
     async def create_task(
         self,
         project_id: UUID,
@@ -91,23 +143,7 @@ class TaskService:
             raise ArchivedProjectError(project_id)
 
         assignee_id = payload.assignee_id
-        if assignee_id is not None and assignee_id != current_user.id:
-            assignee = await self.user_repo.get_by_id(assignee_id)
-            if assignee is None:
-                raise EntityNotFoundError("User", assignee_id)
-            if not assignee.is_active:
-                raise InactiveTaskAssigneeError(assignee_id)
-
-            assignee_access = await self.workspace_repo.get_accessible_by_id(
-                project.workspace_id,
-                assignee_id,
-            )
-            if assignee_access is None:
-                raise TaskAssigneeNotWorkspaceMemberError(
-                    project_id,
-                    project.workspace_id,
-                    assignee_id,
-                )
+        await self._validate_assignee(project, current_user, assignee_id)
 
         task = await self.task_repo.create(
             TaskCreateData(
@@ -123,6 +159,48 @@ class TaskService:
         )
         self.post_commit.add(partial(self.task_cache.invalidate_project, project_id))
         return task
+
+    async def update_task(
+        self,
+        task_id: UUID,
+        current_user: User,
+        payload: TaskUpdate,
+    ) -> Task:
+        task, project, access = await self._get_task_access(
+            task_id,
+            current_user.id,
+        )
+        if access.role not in {
+            WorkspaceAccessRole.OWNER,
+            WorkspaceAccessRole.EDITOR,
+        }:
+            raise PermissionDeniedError(
+                message="Viewer role cannot update tasks in this project",
+                details={
+                    "project_id": str(project.id),
+                    "required_roles": [
+                        WorkspaceAccessRole.OWNER,
+                        WorkspaceAccessRole.EDITOR,
+                    ],
+                },
+            )
+        if project.status is ProjectStatus.ARCHIVED:
+            raise ArchivedTaskUpdateError(project.id, task_id)
+
+        update_data = payload.model_dump(exclude_unset=True)
+        if "assignee_id" in update_data:
+            await self._validate_assignee(
+                project,
+                current_user,
+                payload.assignee_id,
+            )
+
+        updated_task = await self.task_repo.update(
+            task,
+            TaskUpdateData(**update_data),
+        )
+        self.post_commit.add(partial(self.task_cache.invalidate_project, project.id))
+        return updated_task
 
     async def list_tasks(
         self,

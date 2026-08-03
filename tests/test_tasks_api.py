@@ -8,6 +8,7 @@ from app.api.dependencies import get_current_user, get_task_service
 from app.core.enums import TaskPriority, TaskStatus, UserRole
 from app.core.exceptions import (
     ArchivedProjectError,
+    ArchivedTaskUpdateError,
     EntityNotFoundError,
     PermissionDeniedError,
 )
@@ -19,12 +20,14 @@ from app.schemas.task import (
     TaskFilters,
     TaskPageResponse,
     TaskResponse,
+    TaskUpdate,
 )
 
 
 class FakeTaskService:
     def __init__(self) -> None:
         self.calls: list[tuple[UUID, User, TaskCreate]] = []
+        self.update_calls: list[tuple[UUID, User, TaskUpdate]] = []
         self.list_calls: list[tuple[UUID, User, int, int, TaskFilters]] = []
         self.list_result = TaskPageResponse(
             items=[],
@@ -75,6 +78,32 @@ class FakeTaskService:
         if self.error is not None:
             raise self.error
         return self.list_result
+
+    async def update_task(
+        self,
+        task_id: UUID,
+        current_user: User,
+        payload: TaskUpdate,
+    ) -> Task:
+        self.update_calls.append((task_id, current_user, payload))
+        if self.error is not None:
+            raise self.error
+
+        now = datetime.now(UTC)
+        update_data = payload.model_dump(exclude_unset=True)
+        return Task(
+            id=task_id,
+            project_id=uuid4(),
+            assignee_id=update_data.get("assignee_id", uuid4()),
+            created_by=current_user.id,
+            title=update_data.get("title", "Existing task"),
+            description=update_data.get("description", "Existing description"),
+            status=update_data.get("status", TaskStatus.TODO),
+            priority=update_data.get("priority", TaskPriority.MEDIUM),
+            due_date=update_data.get("due_date", now),
+            created_at=now,
+            updated_at=now,
+        )
 
 
 def make_user() -> User:
@@ -244,6 +273,138 @@ def test_create_task_maps_domain_errors(
 
     response = client.post(
         f"/api/v1/projects/{uuid4()}/tasks",
+        json={"title": "Task"},
+    )
+
+    assert response.status_code == expected_status
+
+
+def test_update_task_returns_updated_task() -> None:
+    current_user = make_user()
+    service = FakeTaskService()
+    client = create_authenticated_client(current_user, service)
+    task_id = uuid4()
+
+    response = client.patch(
+        f"/api/v1/tasks/{task_id}",
+        json={
+            "title": "  Review cache  ",
+            "description": None,
+            "assignee_id": None,
+            "status": "IN_REVIEW",
+            "priority": "HIGH",
+            "due_date": None,
+        },
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["id"] == str(task_id)
+    assert body["title"] == "Review cache"
+    assert body["description"] is None
+    assert body["assignee_id"] is None
+    assert body["status"] == "IN_REVIEW"
+    assert body["priority"] == "HIGH"
+    assert body["due_date"] is None
+    assert service.update_calls == [
+        (
+            task_id,
+            current_user,
+            TaskUpdate(
+                title="Review cache",
+                description=None,
+                assignee_id=None,
+                status=TaskStatus.IN_REVIEW,
+                priority=TaskPriority.HIGH,
+                due_date=None,
+            ),
+        )
+    ]
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {},
+        {"title": None},
+        {"title": "   "},
+        {"title": "x" * 256},
+        {"status": None},
+        {"status": "INVALID"},
+        {"priority": None},
+        {"priority": "INVALID"},
+        {"due_date": "2026-08-15T17:00:00"},
+        {"project_id": str(uuid4())},
+        {"created_by": str(uuid4())},
+        {"extra": True},
+    ],
+)
+def test_update_task_rejects_invalid_payload(
+    payload: dict[str, object],
+) -> None:
+    service = FakeTaskService()
+    client = create_authenticated_client(make_user(), service)
+
+    response = client.patch(
+        f"/api/v1/tasks/{uuid4()}",
+        json=payload,
+    )
+
+    assert response.status_code == 422
+    assert service.update_calls == []
+
+
+def test_update_task_rejects_invalid_task_id() -> None:
+    service = FakeTaskService()
+    client = create_authenticated_client(make_user(), service)
+
+    response = client.patch(
+        "/api/v1/tasks/not-a-uuid",
+        json={"title": "Task"},
+    )
+
+    assert response.status_code == 422
+    assert service.update_calls == []
+
+
+def test_update_task_requires_authentication() -> None:
+    app = create_app()
+    service = FakeTaskService()
+    app.dependency_overrides[get_task_service] = lambda: service
+    client = TestClient(app)
+
+    response = client.patch(
+        f"/api/v1/tasks/{uuid4()}",
+        json={"title": "Task"},
+    )
+
+    assert response.status_code == 401
+    assert service.update_calls == []
+
+
+@pytest.mark.parametrize(
+    ("error", "expected_status"),
+    [
+        (
+            PermissionDeniedError(
+                message="Viewer role cannot update tasks in this project"
+            ),
+            403,
+        ),
+        (EntityNotFoundError("Task", uuid4()), 404),
+        (ArchivedTaskUpdateError(uuid4(), uuid4()), 409),
+    ],
+)
+def test_update_task_maps_domain_errors(
+    error: Exception,
+    expected_status: int,
+) -> None:
+    service = FakeTaskService()
+    service.error = error
+    client = create_authenticated_client(make_user(), service)
+
+    response = client.patch(
+        f"/api/v1/tasks/{uuid4()}",
         json={"title": "Task"},
     )
 

@@ -13,6 +13,7 @@ from app.core.enums import (
 )
 from app.core.exceptions import (
     ArchivedProjectError,
+    ArchivedTaskUpdateError,
     EntityNotFoundError,
     InactiveTaskAssigneeError,
     PermissionDeniedError,
@@ -27,15 +28,19 @@ from app.repositories.task_repository import (
     TaskCreateData,
     TaskFilterData,
     TaskListResult,
+    TaskUpdateData,
 )
 from app.repositories.workspace_repository import WorkspaceAccess
-from app.schemas.task import TaskCreate, TaskFilters, TaskPageResponse
+from app.schemas.task import TaskCreate, TaskFilters, TaskPageResponse, TaskUpdate
 from app.services.task_service import TaskService
 
 
 class FakeTaskRepository:
     def __init__(self) -> None:
+        self.tasks: dict[UUID, Task] = {}
+        self.get_calls: list[UUID] = []
         self.create_calls: list[TaskCreateData] = []
+        self.update_calls: list[tuple[Task, TaskUpdateData]] = []
         self.list_calls: list[tuple[UUID, TaskFilterData, int, int]] = []
         self.list_result = TaskListResult(items=[], total=0)
 
@@ -60,6 +65,22 @@ class FakeTaskRepository:
             created_at=now,
             updated_at=now,
         )
+
+    async def get_by_id(self, task_id: UUID) -> Task | None:
+        self.get_calls.append(task_id)
+        return self.tasks.get(task_id)
+
+    async def update(
+        self,
+        task: Task,
+        obj_in: TaskUpdateData,
+        *,
+        refresh: bool = True,
+    ) -> Task:
+        self.update_calls.append((task, obj_in))
+        for field, value in obj_in.model_dump(exclude_unset=True).items():
+            setattr(task, field, value)
+        return task
 
     async def list_by_project(
         self,
@@ -180,6 +201,23 @@ def make_project(
         name="Task Hub",
         description=None,
         status=status,
+        created_at=now,
+        updated_at=now,
+    )
+
+
+def make_task(project_id: UUID, creator_id: UUID) -> Task:
+    now = datetime.now(UTC)
+    return Task(
+        id=uuid4(),
+        project_id=project_id,
+        assignee_id=uuid4(),
+        created_by=creator_id,
+        title="Existing task",
+        description="Existing description",
+        status=TaskStatus.TODO,
+        priority=TaskPriority.MEDIUM,
+        due_date=now,
         created_at=now,
         updated_at=now,
     )
@@ -487,6 +525,248 @@ async def test_create_task_rejects_assignee_outside_workspace() -> None:
         )
 
     assert task_repo.create_calls == []
+
+
+@pytest.mark.parametrize(
+    "role",
+    [WorkspaceAccessRole.OWNER, WorkspaceAccessRole.EDITOR],
+)
+@pytest.mark.asyncio
+async def test_update_task_updates_only_provided_fields(
+    role: WorkspaceAccessRole,
+) -> None:
+    service, task_repo, project_repo, workspace_repo, user_repo = make_service()
+    current_user = make_user()
+    workspace = make_workspace(owner_id=current_user.id)
+    project = make_project(workspace.id)
+    task = make_task(project.id, current_user.id)
+    original_due_date = task.due_date
+    task_repo.tasks[task.id] = task
+    project_repo.projects[project.id] = project
+    workspace_repo.access_by_user[current_user.id] = WorkspaceAccess(
+        workspace=workspace,
+        role=role,
+    )
+
+    result = await service.update_task(
+        task.id,
+        current_user,
+        TaskUpdate(
+            title="  Updated task  ",
+            description=None,
+            assignee_id=None,
+            status=TaskStatus.IN_REVIEW,
+        ),
+    )
+
+    assert result is task
+    assert task.title == "Updated task"
+    assert task.description is None
+    assert task.assignee_id is None
+    assert task.status is TaskStatus.IN_REVIEW
+    assert task.priority is TaskPriority.MEDIUM
+    assert task.due_date == original_due_date
+    assert task_repo.update_calls == [
+        (
+            task,
+            TaskUpdateData(
+                title="Updated task",
+                description=None,
+                assignee_id=None,
+                status=TaskStatus.IN_REVIEW,
+            ),
+        )
+    ]
+    assert user_repo.get_calls == []
+
+
+@pytest.mark.asyncio
+async def test_update_task_invalidates_cache_only_after_commit() -> None:
+    service, task_repo, project_repo, workspace_repo, _ = make_service()
+    current_user = make_user()
+    workspace = make_workspace(owner_id=current_user.id)
+    project = make_project(workspace.id)
+    task = make_task(project.id, current_user.id)
+    task_repo.tasks[task.id] = task
+    project_repo.projects[project.id] = project
+    workspace_repo.access_by_user[current_user.id] = WorkspaceAccess(
+        workspace=workspace,
+        role=WorkspaceAccessRole.OWNER,
+    )
+    task_cache = service.task_cache
+    assert isinstance(task_cache, FakeTaskListCache)
+
+    await service.update_task(
+        task.id,
+        current_user,
+        TaskUpdate(priority=TaskPriority.HIGH),
+    )
+
+    assert task_cache.invalidate_calls == []
+
+    await service.post_commit.run()
+
+    assert task_cache.invalidate_calls == [project.id]
+
+
+@pytest.mark.asyncio
+async def test_update_task_hides_missing_task() -> None:
+    service, task_repo, project_repo, workspace_repo, _ = make_service()
+    current_user = make_user()
+    task_id = uuid4()
+
+    with pytest.raises(EntityNotFoundError) as exc_info:
+        await service.update_task(
+            task_id,
+            current_user,
+            TaskUpdate(title="Updated"),
+        )
+
+    assert exc_info.value.details == {"entity": "Task", "id": str(task_id)}
+    assert task_repo.update_calls == []
+    assert project_repo.get_calls == []
+    assert workspace_repo.get_calls == []
+
+
+@pytest.mark.asyncio
+async def test_update_task_hides_inaccessible_task() -> None:
+    service, task_repo, project_repo, _, _ = make_service()
+    current_user = make_user()
+    project = make_project(uuid4())
+    task = make_task(project.id, current_user.id)
+    task_repo.tasks[task.id] = task
+    project_repo.projects[project.id] = project
+
+    with pytest.raises(EntityNotFoundError) as exc_info:
+        await service.update_task(
+            task.id,
+            current_user,
+            TaskUpdate(title="Updated"),
+        )
+
+    assert exc_info.value.details == {"entity": "Task", "id": str(task.id)}
+    assert task_repo.update_calls == []
+
+
+@pytest.mark.asyncio
+async def test_update_task_rejects_viewer() -> None:
+    service, task_repo, project_repo, workspace_repo, _ = make_service()
+    current_user = make_user()
+    workspace = make_workspace(owner_id=uuid4())
+    project = make_project(workspace.id)
+    task = make_task(project.id, current_user.id)
+    task_repo.tasks[task.id] = task
+    project_repo.projects[project.id] = project
+    workspace_repo.access_by_user[current_user.id] = WorkspaceAccess(
+        workspace=workspace,
+        role=WorkspaceAccessRole.VIEWER,
+    )
+
+    with pytest.raises(PermissionDeniedError):
+        await service.update_task(
+            task.id,
+            current_user,
+            TaskUpdate(title="Updated"),
+        )
+
+    assert task_repo.update_calls == []
+
+
+@pytest.mark.asyncio
+async def test_update_task_rejects_archived_project() -> None:
+    service, task_repo, project_repo, workspace_repo, _ = make_service()
+    current_user = make_user()
+    workspace = make_workspace(owner_id=current_user.id)
+    project = make_project(workspace.id, status=ProjectStatus.ARCHIVED)
+    task = make_task(project.id, current_user.id)
+    task_repo.tasks[task.id] = task
+    project_repo.projects[project.id] = project
+    workspace_repo.access_by_user[current_user.id] = WorkspaceAccess(
+        workspace=workspace,
+        role=WorkspaceAccessRole.OWNER,
+    )
+
+    with pytest.raises(ArchivedTaskUpdateError):
+        await service.update_task(
+            task.id,
+            current_user,
+            TaskUpdate(title="Updated"),
+        )
+
+    assert task_repo.update_calls == []
+
+
+@pytest.mark.asyncio
+async def test_update_task_allows_active_workspace_member_as_assignee() -> None:
+    service, task_repo, project_repo, workspace_repo, user_repo = make_service()
+    current_user = make_user()
+    assignee = make_user()
+    workspace = make_workspace(owner_id=current_user.id)
+    project = make_project(workspace.id)
+    task = make_task(project.id, current_user.id)
+    task_repo.tasks[task.id] = task
+    project_repo.projects[project.id] = project
+    user_repo.users[assignee.id] = assignee
+    workspace_repo.access_by_user[current_user.id] = WorkspaceAccess(
+        workspace=workspace,
+        role=WorkspaceAccessRole.OWNER,
+    )
+    workspace_repo.access_by_user[assignee.id] = WorkspaceAccess(
+        workspace=workspace,
+        role=WorkspaceAccessRole.VIEWER,
+    )
+
+    await service.update_task(
+        task.id,
+        current_user,
+        TaskUpdate(assignee_id=assignee.id),
+    )
+
+    assert task.assignee_id == assignee.id
+    assert user_repo.get_calls == [assignee.id]
+    assert workspace_repo.get_calls == [
+        (workspace.id, current_user.id),
+        (workspace.id, assignee.id),
+    ]
+
+
+@pytest.mark.parametrize(
+    ("assignee_exists", "assignee_active", "expected_error"),
+    [
+        (False, True, EntityNotFoundError),
+        (True, False, InactiveTaskAssigneeError),
+        (True, True, TaskAssigneeNotWorkspaceMemberError),
+    ],
+)
+@pytest.mark.asyncio
+async def test_update_task_rejects_invalid_assignee(
+    assignee_exists: bool,
+    assignee_active: bool,
+    expected_error: type[Exception],
+) -> None:
+    service, task_repo, project_repo, workspace_repo, user_repo = make_service()
+    current_user = make_user()
+    assignee = make_user(active=assignee_active)
+    workspace = make_workspace(owner_id=current_user.id)
+    project = make_project(workspace.id)
+    task = make_task(project.id, current_user.id)
+    task_repo.tasks[task.id] = task
+    project_repo.projects[project.id] = project
+    workspace_repo.access_by_user[current_user.id] = WorkspaceAccess(
+        workspace=workspace,
+        role=WorkspaceAccessRole.OWNER,
+    )
+    if assignee_exists:
+        user_repo.users[assignee.id] = assignee
+
+    with pytest.raises(expected_error):
+        await service.update_task(
+            task.id,
+            current_user,
+            TaskUpdate(assignee_id=assignee.id),
+        )
+
+    assert task_repo.update_calls == []
 
 
 @pytest.mark.parametrize(

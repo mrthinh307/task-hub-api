@@ -34,6 +34,56 @@ class TaskCreate(BaseModel):
         return value
 
 
+class TaskUpdate(BaseModel):
+    title: str | None = Field(default=None, min_length=1, max_length=255)
+    description: str | None = None
+    assignee_id: UUID | None = None
+    status: TaskStatus | None = None
+    priority: TaskPriority | None = None
+    due_date: datetime | None = None
+
+    model_config = ConfigDict(extra="forbid")
+
+    @field_validator("title")
+    @classmethod
+    def normalize_title(cls, value: str | None) -> str:
+        if value is None:
+            raise ValueError("Task title must not be null")
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("Task title must not be blank")
+        return normalized
+
+    @field_validator("status")
+    @classmethod
+    def reject_null_status(cls, value: TaskStatus | None) -> TaskStatus:
+        if value is None:
+            raise ValueError("Task status must not be null")
+        return value
+
+    @field_validator("priority")
+    @classmethod
+    def reject_null_priority(cls, value: TaskPriority | None) -> TaskPriority:
+        if value is None:
+            raise ValueError("Task priority must not be null")
+        return value
+
+    @field_validator("due_date")
+    @classmethod
+    def require_timezone(cls, value: datetime | None) -> datetime | None:
+        if value is not None and (
+            value.tzinfo is None or value.utcoffset() is None
+        ):
+            raise ValueError("Task due date must include a timezone")
+        return value
+
+    @model_validator(mode="after")
+    def require_update_field(self) -> Self:
+        if not self.model_fields_set:
+            raise ValueError("At least one task field must be provided")
+        return self
+
+
 class TaskResponse(BaseModel):
     id: UUID
     project_id: UUID
