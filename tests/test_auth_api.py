@@ -237,6 +237,10 @@ def test_openapi_contains_auth_user_and_health_operations() -> None:
         "get",
         "post",
     }
+    assert set(openapi["paths"]["/api/v1/tasks/{task_id}"]) == {
+        "patch",
+        "delete",
+    }
     assert (
         openapi["paths"]["/api/v1/auth/register"]["post"]["responses"]["409"][
             "content"
