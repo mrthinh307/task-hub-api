@@ -223,10 +223,12 @@ def test_openapi_contains_auth_user_and_health_operations() -> None:
         "/api/v1/auth/login",
         "/api/v1/auth/refresh",
         "/api/v1/auth/logout",
+        "/api/v1/comments/{comment_id}",
         "/api/v1/labels/{label_id}",
         "/api/v1/projects/{project_id}/labels",
         "/api/v1/projects/{project_id}/tasks",
         "/api/v1/tasks/{task_id}/labels/{label_id}",
+        "/api/v1/tasks/{task_id}/comments",
         "/api/v1/tasks/{task_id}",
         "/api/v1/users/me",
         "/api/v1/workspaces",
@@ -255,6 +257,12 @@ def test_openapi_contains_auth_user_and_health_operations() -> None:
     }
     assert set(openapi["paths"]["/api/v1/tasks/{task_id}/labels/{label_id}"]) == {
         "put",
+        "delete",
+    }
+    assert set(openapi["paths"]["/api/v1/tasks/{task_id}/comments"]) == {
+        "post",
+    }
+    assert set(openapi["paths"]["/api/v1/comments/{comment_id}"]) == {
         "delete",
     }
     assert (
