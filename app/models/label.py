@@ -1,9 +1,9 @@
 import uuid
 from typing import TYPE_CHECKING
 
-from sqlalchemy import ForeignKey, String
+from sqlalchemy import ForeignKey, String, UniqueConstraint
 from sqlalchemy.dialects.postgresql import UUID as PG_UUID
-from sqlalchemy.orm import Mapped, mapped_column, relationship
+from sqlalchemy.orm import Mapped, mapped_column, relationship, validates
 
 from app.db.base import Base
 
@@ -14,6 +14,13 @@ if TYPE_CHECKING:
 
 class Label(Base):
     __tablename__ = "labels"
+    __table_args__ = (
+        UniqueConstraint(
+            "project_id",
+            "name",
+            name="uq_labels_project_name",
+        ),
+    )
 
     project_id: Mapped[uuid.UUID] = mapped_column(
         PG_UUID(as_uuid=True),
@@ -28,3 +35,13 @@ class Label(Base):
     tasks: Mapped[list["Task"]] = relationship(
         "Task", secondary="task_labels", back_populates="labels"
     )
+
+    @validates("tasks")
+    def _validate_task_project(self, _: str, task: "Task") -> "Task":
+        if (
+            self.project_id is not None
+            and task.project_id is not None
+            and self.project_id != task.project_id
+        ):
+            raise ValueError("Task and label must belong to the same project")
+        return task
