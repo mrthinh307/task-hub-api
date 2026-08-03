@@ -99,6 +99,7 @@ def test_add_comment_returns_created_comment() -> None:
         {"content": ""},
         {"content": "   "},
         {"content": None},
+        {"content": "x" * 10_001},
         {"content": "Hello", "extra": True},
     ],
 )
