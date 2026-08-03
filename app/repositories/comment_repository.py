@@ -1,11 +1,28 @@
+from uuid import UUID
+
+from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.comment import Comment
-from app.repositories.base_repository import RepositoryBase
+from app.repositories.base_repository import (
+    CreateRepository,
+    DeleteRepository,
+    GetByIdRepository,
+)
 
 
-class CommentRepository(RepositoryBase[Comment]):
-    """Placeholder repository; compose capabilities when comment features are added."""
+class CommentCreateData(BaseModel):
+    task_id: UUID
+    author_id: UUID
+    content: str
+
+
+class CommentRepository(
+    GetByIdRepository[Comment],
+    CreateRepository[Comment, CommentCreateData],
+    DeleteRepository[Comment],
+):
+    """Persistence operations required by comment features."""
 
     def __init__(self, session: AsyncSession):
         super().__init__(Comment, session)

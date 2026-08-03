@@ -11,6 +11,7 @@ from app.db.post_commit import PostCommitActions, get_post_commit_actions
 from app.db.session import get_db, get_redis
 from app.models.user import User
 from app.repositories.auth_repository import AuthRepository
+from app.repositories.comment_repository import CommentRepository
 from app.repositories.label_repository import LabelRepository
 from app.repositories.project_repository import ProjectRepository
 from app.repositories.refresh_session_repository import RefreshSessionRepository
@@ -20,6 +21,7 @@ from app.repositories.user_repository import UserRepository
 from app.repositories.workspace_member_repository import WorkspaceMemberRepository
 from app.repositories.workspace_repository import WorkspaceRepository
 from app.services.auth_service import AuthService
+from app.services.comment_service import CommentService
 from app.services.label_service import LabelService
 from app.services.project_service import ProjectService
 from app.services.task_label_service import TaskLabelService
@@ -86,6 +88,12 @@ def get_task_repository(
     return TaskRepository(session)
 
 
+def get_comment_repository(
+    session: AsyncSession = Depends(get_db),
+) -> CommentRepository:
+    return CommentRepository(session)
+
+
 def get_task_label_repository(
     session: AsyncSession = Depends(get_db),
 ) -> TaskLabelRepository:
@@ -131,6 +139,20 @@ def get_task_service(
         user_repo,
         task_cache,
         post_commit,
+    )
+
+
+def get_comment_service(
+    comment_repo: CommentRepository = Depends(get_comment_repository),
+    task_repo: TaskRepository = Depends(get_task_repository),
+    project_repo: ProjectRepository = Depends(get_project_repository),
+    workspace_repo: WorkspaceRepository = Depends(get_workspace_repository),
+) -> CommentService:
+    return CommentService(
+        comment_repo,
+        task_repo,
+        project_repo,
+        workspace_repo,
     )
 
 
