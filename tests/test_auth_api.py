@@ -224,6 +224,7 @@ def test_openapi_contains_auth_user_and_health_operations() -> None:
         "/api/v1/auth/refresh",
         "/api/v1/auth/logout",
         "/api/v1/projects/{project_id}/tasks",
+        "/api/v1/tasks/{task_id}",
         "/api/v1/users/me",
         "/api/v1/workspaces",
         "/api/v1/workspaces/{workspace_id}",
@@ -235,6 +236,10 @@ def test_openapi_contains_auth_user_and_health_operations() -> None:
     assert set(openapi["paths"]["/api/v1/projects/{project_id}/tasks"]) == {
         "get",
         "post",
+    }
+    assert set(openapi["paths"]["/api/v1/tasks/{task_id}"]) == {
+        "patch",
+        "delete",
     }
     assert (
         openapi["paths"]["/api/v1/auth/register"]["post"]["responses"]["409"][

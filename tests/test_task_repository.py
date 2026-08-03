@@ -8,7 +8,87 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.enums import TaskPriority, TaskStatus
 from app.models.task import Task
-from app.repositories.task_repository import TaskFilterData, TaskRepository
+from app.repositories.task_repository import (
+    TaskFilterData,
+    TaskRepository,
+    TaskUpdateData,
+)
+
+
+@pytest.mark.asyncio
+async def test_get_and_update_task_flushes_without_committing() -> None:
+    now = datetime.now(UTC)
+    task = Task(
+        id=uuid4(),
+        project_id=uuid4(),
+        assignee_id=uuid4(),
+        created_by=uuid4(),
+        title="Existing task",
+        description="Existing description",
+        status=TaskStatus.TODO,
+        priority=TaskPriority.MEDIUM,
+        due_date=now,
+        created_at=now,
+        updated_at=now,
+    )
+    session = MagicMock(spec=AsyncSession)
+    session.get = AsyncMock(return_value=task)
+    session.flush = AsyncMock()
+    session.refresh = AsyncMock()
+    session.commit = AsyncMock()
+    repo = TaskRepository(session)
+
+    loaded = await repo.get_by_id(task.id)
+    updated = await repo.update(
+        task,
+        TaskUpdateData(
+            description=None,
+            status=TaskStatus.IN_PROGRESS,
+        ),
+    )
+
+    assert loaded is task
+    assert updated is task
+    assert task.title == "Existing task"
+    assert task.description is None
+    assert task.status is TaskStatus.IN_PROGRESS
+    session.get.assert_awaited_once_with(Task, task.id)
+    session.add.assert_called_once_with(task)
+    session.flush.assert_awaited_once_with()
+    session.refresh.assert_awaited_once_with(task)
+    session.commit.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_delete_task_flushes_without_committing() -> None:
+    now = datetime.now(UTC)
+    task = Task(
+        id=uuid4(),
+        project_id=uuid4(),
+        assignee_id=None,
+        created_by=uuid4(),
+        title="Task",
+        description=None,
+        status=TaskStatus.TODO,
+        priority=TaskPriority.MEDIUM,
+        due_date=None,
+        created_at=now,
+        updated_at=now,
+    )
+    session = MagicMock(spec=AsyncSession)
+    session.get = AsyncMock(return_value=task)
+    session.delete = AsyncMock()
+    session.flush = AsyncMock()
+    session.commit = AsyncMock()
+    repo = TaskRepository(session)
+
+    deleted = await repo.delete(task.id)
+
+    assert deleted
+    session.get.assert_awaited_once_with(Task, task.id)
+    session.delete.assert_awaited_once_with(task)
+    session.flush.assert_awaited_once_with()
+    session.commit.assert_not_awaited()
 
 
 @pytest.mark.asyncio

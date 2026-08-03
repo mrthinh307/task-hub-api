@@ -10,7 +10,12 @@ from sqlalchemy.sql.elements import ColumnElement
 
 from app.core.enums import TaskPriority, TaskStatus
 from app.models.task import Task
-from app.repositories.base_repository import CreateRepository
+from app.repositories.base_repository import (
+    CreateRepository,
+    DeleteRepository,
+    GetByIdRepository,
+    UpdateRepository,
+)
 
 
 class TaskCreateData(BaseModel):
@@ -22,6 +27,15 @@ class TaskCreateData(BaseModel):
     status: TaskStatus
     priority: TaskPriority
     due_date: datetime | None
+
+
+class TaskUpdateData(BaseModel):
+    title: str | None = None
+    description: str | None = None
+    assignee_id: UUID | None = None
+    status: TaskStatus | None = None
+    priority: TaskPriority | None = None
+    due_date: datetime | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -42,7 +56,10 @@ class TaskFilterData:
 
 
 class TaskRepository(
+    GetByIdRepository[Task],
     CreateRepository[Task, TaskCreateData],
+    UpdateRepository[Task, TaskUpdateData],
+    DeleteRepository[Task],
 ):
     """Persistence operations required by task features."""
 

@@ -11,7 +11,13 @@ from app.core.enums import TaskPriority, TaskStatus
 from app.models.task import Task
 from app.models.user import User
 from app.schemas.errors import ErrorResponse
-from app.schemas.task import TaskCreate, TaskFilters, TaskPageResponse, TaskResponse
+from app.schemas.task import (
+    TaskCreate,
+    TaskFilters,
+    TaskPageResponse,
+    TaskResponse,
+    TaskUpdate,
+)
 from app.services.task_service import TaskService
 
 router = APIRouter(prefix="/tasks", tags=["Tasks"])
@@ -41,10 +47,7 @@ def get_task_filters(
             due_to=due_to,
         )
     except ValidationError as exc:
-        errors = [
-            {**error, "loc": ("query", *error["loc"])}
-            for error in exc.errors()
-        ]
+        errors = [{**error, "loc": ("query", *error["loc"])} for error in exc.errors()]
         raise RequestValidationError(errors) from exc
 
 
@@ -55,7 +58,7 @@ def get_task_filters(
         status.HTTP_401_UNAUTHORIZED: {"model": ErrorResponse},
         status.HTTP_403_FORBIDDEN: {"model": ErrorResponse},
         status.HTTP_404_NOT_FOUND: {"model": ErrorResponse},
-        status.HTTP_422_UNPROCESSABLE_ENTITY: {"model": ErrorResponse},
+        status.HTTP_422_UNPROCESSABLE_CONTENT: {"model": ErrorResponse},
     },
 )
 async def list_tasks(
@@ -84,7 +87,7 @@ async def list_tasks(
         status.HTTP_403_FORBIDDEN: {"model": ErrorResponse},
         status.HTTP_404_NOT_FOUND: {"model": ErrorResponse},
         status.HTTP_409_CONFLICT: {"model": ErrorResponse},
-        status.HTTP_422_UNPROCESSABLE_ENTITY: {"model": ErrorResponse},
+        status.HTTP_422_UNPROCESSABLE_CONTENT: {"model": ErrorResponse},
     },
 )
 async def create_task(
@@ -94,3 +97,42 @@ async def create_task(
     service: TaskService = Depends(get_task_service),
 ) -> Task:
     return await service.create_task(project_id, current_user, payload)
+
+
+@router.patch(
+    "/{task_id}",
+    response_model=TaskResponse,
+    responses={
+        status.HTTP_401_UNAUTHORIZED: {"model": ErrorResponse},
+        status.HTTP_403_FORBIDDEN: {"model": ErrorResponse},
+        status.HTTP_404_NOT_FOUND: {"model": ErrorResponse},
+        status.HTTP_409_CONFLICT: {"model": ErrorResponse},
+        status.HTTP_422_UNPROCESSABLE_CONTENT: {"model": ErrorResponse},
+    },
+)
+async def update_task(
+    task_id: UUID,
+    payload: TaskUpdate,
+    current_user: User = Depends(get_current_user),
+    service: TaskService = Depends(get_task_service),
+) -> Task:
+    return await service.update_task(task_id, current_user, payload)
+
+
+@router.delete(
+    "/{task_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    responses={
+        status.HTTP_401_UNAUTHORIZED: {"model": ErrorResponse},
+        status.HTTP_403_FORBIDDEN: {"model": ErrorResponse},
+        status.HTTP_404_NOT_FOUND: {"model": ErrorResponse},
+        status.HTTP_409_CONFLICT: {"model": ErrorResponse},
+        status.HTTP_422_UNPROCESSABLE_CONTENT: {"model": ErrorResponse},
+    },
+)
+async def delete_task(
+    task_id: UUID,
+    current_user: User = Depends(get_current_user),
+    service: TaskService = Depends(get_task_service),
+) -> None:
+    await service.delete_task(task_id, current_user)
