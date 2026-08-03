@@ -60,6 +60,38 @@ async def test_get_and_update_task_flushes_without_committing() -> None:
 
 
 @pytest.mark.asyncio
+async def test_delete_task_flushes_without_committing() -> None:
+    now = datetime.now(UTC)
+    task = Task(
+        id=uuid4(),
+        project_id=uuid4(),
+        assignee_id=None,
+        created_by=uuid4(),
+        title="Task",
+        description=None,
+        status=TaskStatus.TODO,
+        priority=TaskPriority.MEDIUM,
+        due_date=None,
+        created_at=now,
+        updated_at=now,
+    )
+    session = MagicMock(spec=AsyncSession)
+    session.get = AsyncMock(return_value=task)
+    session.delete = AsyncMock()
+    session.flush = AsyncMock()
+    session.commit = AsyncMock()
+    repo = TaskRepository(session)
+
+    deleted = await repo.delete(task.id)
+
+    assert deleted
+    session.get.assert_awaited_once_with(Task, task.id)
+    session.delete.assert_awaited_once_with(task)
+    session.flush.assert_awaited_once_with()
+    session.commit.assert_not_awaited()
+
+
+@pytest.mark.asyncio
 async def test_list_by_project_returns_stable_paginated_result() -> None:
     project_id = uuid4()
     now = datetime.now(UTC)

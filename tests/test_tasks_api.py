@@ -8,6 +8,7 @@ from app.api.dependencies import get_current_user, get_task_service
 from app.core.enums import TaskPriority, TaskStatus, UserRole
 from app.core.exceptions import (
     ArchivedProjectError,
+    ArchivedTaskDeleteError,
     ArchivedTaskUpdateError,
     EntityNotFoundError,
     PermissionDeniedError,
@@ -27,6 +28,7 @@ from app.schemas.task import (
 class FakeTaskService:
     def __init__(self) -> None:
         self.calls: list[tuple[UUID, User, TaskCreate]] = []
+        self.delete_calls: list[tuple[UUID, User]] = []
         self.update_calls: list[tuple[UUID, User, TaskUpdate]] = []
         self.list_calls: list[tuple[UUID, User, int, int, TaskFilters]] = []
         self.list_result = TaskPageResponse(
@@ -104,6 +106,15 @@ class FakeTaskService:
             created_at=now,
             updated_at=now,
         )
+
+    async def delete_task(
+        self,
+        task_id: UUID,
+        current_user: User,
+    ) -> None:
+        self.delete_calls.append((task_id, current_user))
+        if self.error is not None:
+            raise self.error
 
 
 def make_user() -> User:
@@ -407,6 +418,67 @@ def test_update_task_maps_domain_errors(
         f"/api/v1/tasks/{uuid4()}",
         json={"title": "Task"},
     )
+
+    assert response.status_code == expected_status
+
+
+def test_delete_task_returns_no_content() -> None:
+    current_user = make_user()
+    service = FakeTaskService()
+    client = create_authenticated_client(current_user, service)
+    task_id = uuid4()
+
+    response = client.delete(f"/api/v1/tasks/{task_id}")
+
+    assert response.status_code == 204
+    assert response.content == b""
+    assert service.delete_calls == [(task_id, current_user)]
+
+
+def test_delete_task_rejects_invalid_task_id() -> None:
+    service = FakeTaskService()
+    client = create_authenticated_client(make_user(), service)
+
+    response = client.delete("/api/v1/tasks/not-a-uuid")
+
+    assert response.status_code == 422
+    assert service.delete_calls == []
+
+
+def test_delete_task_requires_authentication() -> None:
+    app = create_app()
+    service = FakeTaskService()
+    app.dependency_overrides[get_task_service] = lambda: service
+    client = TestClient(app)
+
+    response = client.delete(f"/api/v1/tasks/{uuid4()}")
+
+    assert response.status_code == 401
+    assert service.delete_calls == []
+
+
+@pytest.mark.parametrize(
+    ("error", "expected_status"),
+    [
+        (
+            PermissionDeniedError(
+                message="Viewer role cannot delete tasks in this project"
+            ),
+            403,
+        ),
+        (EntityNotFoundError("Task", uuid4()), 404),
+        (ArchivedTaskDeleteError(uuid4(), uuid4()), 409),
+    ],
+)
+def test_delete_task_maps_domain_errors(
+    error: Exception,
+    expected_status: int,
+) -> None:
+    service = FakeTaskService()
+    service.error = error
+    client = create_authenticated_client(make_user(), service)
+
+    response = client.delete(f"/api/v1/tasks/{uuid4()}")
 
     assert response.status_code == expected_status
 

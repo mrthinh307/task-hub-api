@@ -70,6 +70,17 @@ class ArchivedTaskUpdateError(ConflictError):
         )
 
 
+class ArchivedTaskDeleteError(ConflictError):
+    def __init__(self, project_id: Any, task_id: Any) -> None:
+        super().__init__(
+            message="Tasks in archived projects cannot be deleted",
+            details={
+                "project_id": str(project_id),
+                "task_id": str(task_id),
+            },
+        )
+
+
 class InactiveTaskAssigneeError(ConflictError):
     def __init__(self, user_id: Any) -> None:
         super().__init__(

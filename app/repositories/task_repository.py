@@ -12,6 +12,7 @@ from app.core.enums import TaskPriority, TaskStatus
 from app.models.task import Task
 from app.repositories.base_repository import (
     CreateRepository,
+    DeleteRepository,
     GetByIdRepository,
     UpdateRepository,
 )
@@ -58,6 +59,7 @@ class TaskRepository(
     GetByIdRepository[Task],
     CreateRepository[Task, TaskCreateData],
     UpdateRepository[Task, TaskUpdateData],
+    DeleteRepository[Task],
 ):
     """Persistence operations required by task features."""
 

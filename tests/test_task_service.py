@@ -13,6 +13,7 @@ from app.core.enums import (
 )
 from app.core.exceptions import (
     ArchivedProjectError,
+    ArchivedTaskDeleteError,
     ArchivedTaskUpdateError,
     EntityNotFoundError,
     InactiveTaskAssigneeError,
@@ -40,6 +41,8 @@ class FakeTaskRepository:
         self.tasks: dict[UUID, Task] = {}
         self.get_calls: list[UUID] = []
         self.create_calls: list[TaskCreateData] = []
+        self.delete_calls: list[UUID] = []
+        self.delete_result: bool | None = None
         self.update_calls: list[tuple[Task, TaskUpdateData]] = []
         self.list_calls: list[tuple[UUID, TaskFilterData, int, int]] = []
         self.list_result = TaskListResult(items=[], total=0)
@@ -81,6 +84,12 @@ class FakeTaskRepository:
         for field, value in obj_in.model_dump(exclude_unset=True).items():
             setattr(task, field, value)
         return task
+
+    async def delete(self, task_id: UUID) -> bool:
+        self.delete_calls.append(task_id)
+        if self.delete_result is not None:
+            return self.delete_result
+        return self.tasks.pop(task_id, None) is not None
 
     async def list_by_project(
         self,
@@ -767,6 +776,152 @@ async def test_update_task_rejects_invalid_assignee(
         )
 
     assert task_repo.update_calls == []
+
+
+@pytest.mark.parametrize(
+    "role",
+    [WorkspaceAccessRole.OWNER, WorkspaceAccessRole.EDITOR],
+)
+@pytest.mark.asyncio
+async def test_delete_task_allows_workspace_writers(
+    role: WorkspaceAccessRole,
+) -> None:
+    service, task_repo, project_repo, workspace_repo, _ = make_service()
+    current_user = make_user()
+    workspace = make_workspace(owner_id=current_user.id)
+    project = make_project(workspace.id)
+    task = make_task(project.id, current_user.id)
+    task_repo.tasks[task.id] = task
+    project_repo.projects[project.id] = project
+    workspace_repo.access_by_user[current_user.id] = WorkspaceAccess(
+        workspace=workspace,
+        role=role,
+    )
+
+    await service.delete_task(task.id, current_user)
+
+    assert task_repo.delete_calls == [task.id]
+    assert task.id not in task_repo.tasks
+
+
+@pytest.mark.asyncio
+async def test_delete_task_invalidates_cache_only_after_commit() -> None:
+    service, task_repo, project_repo, workspace_repo, _ = make_service()
+    current_user = make_user()
+    workspace = make_workspace(owner_id=current_user.id)
+    project = make_project(workspace.id)
+    task = make_task(project.id, current_user.id)
+    task_repo.tasks[task.id] = task
+    project_repo.projects[project.id] = project
+    workspace_repo.access_by_user[current_user.id] = WorkspaceAccess(
+        workspace=workspace,
+        role=WorkspaceAccessRole.OWNER,
+    )
+    task_cache = service.task_cache
+    assert isinstance(task_cache, FakeTaskListCache)
+
+    await service.delete_task(task.id, current_user)
+
+    assert task_cache.invalidate_calls == []
+
+    await service.post_commit.run()
+
+    assert task_cache.invalidate_calls == [project.id]
+
+
+@pytest.mark.asyncio
+async def test_delete_task_hides_missing_task() -> None:
+    service, task_repo, project_repo, workspace_repo, _ = make_service()
+    current_user = make_user()
+    task_id = uuid4()
+
+    with pytest.raises(EntityNotFoundError) as exc_info:
+        await service.delete_task(task_id, current_user)
+
+    assert exc_info.value.details == {"entity": "Task", "id": str(task_id)}
+    assert task_repo.delete_calls == []
+    assert project_repo.get_calls == []
+    assert workspace_repo.get_calls == []
+
+
+@pytest.mark.asyncio
+async def test_delete_task_hides_inaccessible_task() -> None:
+    service, task_repo, project_repo, _, _ = make_service()
+    current_user = make_user()
+    project = make_project(uuid4())
+    task = make_task(project.id, current_user.id)
+    task_repo.tasks[task.id] = task
+    project_repo.projects[project.id] = project
+
+    with pytest.raises(EntityNotFoundError) as exc_info:
+        await service.delete_task(task.id, current_user)
+
+    assert exc_info.value.details == {"entity": "Task", "id": str(task.id)}
+    assert task_repo.delete_calls == []
+
+
+@pytest.mark.asyncio
+async def test_delete_task_rejects_viewer() -> None:
+    service, task_repo, project_repo, workspace_repo, _ = make_service()
+    current_user = make_user()
+    workspace = make_workspace(owner_id=uuid4())
+    project = make_project(workspace.id)
+    task = make_task(project.id, current_user.id)
+    task_repo.tasks[task.id] = task
+    project_repo.projects[project.id] = project
+    workspace_repo.access_by_user[current_user.id] = WorkspaceAccess(
+        workspace=workspace,
+        role=WorkspaceAccessRole.VIEWER,
+    )
+
+    with pytest.raises(PermissionDeniedError):
+        await service.delete_task(task.id, current_user)
+
+    assert task_repo.delete_calls == []
+
+
+@pytest.mark.asyncio
+async def test_delete_task_rejects_archived_project() -> None:
+    service, task_repo, project_repo, workspace_repo, _ = make_service()
+    current_user = make_user()
+    workspace = make_workspace(owner_id=current_user.id)
+    project = make_project(workspace.id, status=ProjectStatus.ARCHIVED)
+    task = make_task(project.id, current_user.id)
+    task_repo.tasks[task.id] = task
+    project_repo.projects[project.id] = project
+    workspace_repo.access_by_user[current_user.id] = WorkspaceAccess(
+        workspace=workspace,
+        role=WorkspaceAccessRole.OWNER,
+    )
+
+    with pytest.raises(ArchivedTaskDeleteError):
+        await service.delete_task(task.id, current_user)
+
+    assert task_repo.delete_calls == []
+
+
+@pytest.mark.asyncio
+async def test_delete_task_handles_task_removed_during_request() -> None:
+    service, task_repo, project_repo, workspace_repo, _ = make_service()
+    current_user = make_user()
+    workspace = make_workspace(owner_id=current_user.id)
+    project = make_project(workspace.id)
+    task = make_task(project.id, current_user.id)
+    task_repo.tasks[task.id] = task
+    task_repo.delete_result = False
+    project_repo.projects[project.id] = project
+    workspace_repo.access_by_user[current_user.id] = WorkspaceAccess(
+        workspace=workspace,
+        role=WorkspaceAccessRole.OWNER,
+    )
+
+    with pytest.raises(EntityNotFoundError):
+        await service.delete_task(task.id, current_user)
+
+    task_cache = service.task_cache
+    assert isinstance(task_cache, FakeTaskListCache)
+    await service.post_commit.run()
+    assert task_cache.invalidate_calls == []
 
 
 @pytest.mark.parametrize(

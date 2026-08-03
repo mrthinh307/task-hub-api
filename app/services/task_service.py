@@ -9,6 +9,7 @@ from app.core.enums import (
 )
 from app.core.exceptions import (
     ArchivedProjectError,
+    ArchivedTaskDeleteError,
     ArchivedTaskUpdateError,
     EntityNotFoundError,
     InactiveTaskAssigneeError,
@@ -201,6 +202,37 @@ class TaskService:
         )
         self.post_commit.add(partial(self.task_cache.invalidate_project, project.id))
         return updated_task
+
+    async def delete_task(
+        self,
+        task_id: UUID,
+        current_user: User,
+    ) -> None:
+        _, project, access = await self._get_task_access(
+            task_id,
+            current_user.id,
+        )
+        if access.role not in {
+            WorkspaceAccessRole.OWNER,
+            WorkspaceAccessRole.EDITOR,
+        }:
+            raise PermissionDeniedError(
+                message="Viewer role cannot delete tasks in this project",
+                details={
+                    "project_id": str(project.id),
+                    "required_roles": [
+                        WorkspaceAccessRole.OWNER,
+                        WorkspaceAccessRole.EDITOR,
+                    ],
+                },
+            )
+        if project.status is ProjectStatus.ARCHIVED:
+            raise ArchivedTaskDeleteError(project.id, task_id)
+
+        deleted = await self.task_repo.delete(task_id)
+        if not deleted:
+            raise EntityNotFoundError("Task", task_id)
+        self.post_commit.add(partial(self.task_cache.invalidate_project, project.id))
 
     async def list_tasks(
         self,
