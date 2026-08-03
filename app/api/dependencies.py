@@ -11,14 +11,18 @@ from app.db.post_commit import PostCommitActions, get_post_commit_actions
 from app.db.session import get_db, get_redis
 from app.models.user import User
 from app.repositories.auth_repository import AuthRepository
+from app.repositories.label_repository import LabelRepository
 from app.repositories.project_repository import ProjectRepository
 from app.repositories.refresh_session_repository import RefreshSessionRepository
+from app.repositories.task_label_repository import TaskLabelRepository
 from app.repositories.task_repository import TaskRepository
 from app.repositories.user_repository import UserRepository
 from app.repositories.workspace_member_repository import WorkspaceMemberRepository
 from app.repositories.workspace_repository import WorkspaceRepository
 from app.services.auth_service import AuthService
+from app.services.label_service import LabelService
 from app.services.project_service import ProjectService
+from app.services.task_label_service import TaskLabelService
 from app.services.task_service import TaskService
 from app.services.user_service import UserService
 from app.services.workspace_membership_service import WorkspaceMembershipService
@@ -70,10 +74,22 @@ def get_project_repository(
     return ProjectRepository(session)
 
 
+def get_label_repository(
+    session: AsyncSession = Depends(get_db),
+) -> LabelRepository:
+    return LabelRepository(session)
+
+
 def get_task_repository(
     session: AsyncSession = Depends(get_db),
 ) -> TaskRepository:
     return TaskRepository(session)
+
+
+def get_task_label_repository(
+    session: AsyncSession = Depends(get_db),
+) -> TaskLabelRepository:
+    return TaskLabelRepository(session)
 
 
 def get_task_list_cache(
@@ -92,6 +108,14 @@ def get_project_service(
     return ProjectService(project_repo, workspace_repo)
 
 
+def get_label_service(
+    label_repo: LabelRepository = Depends(get_label_repository),
+    project_repo: ProjectRepository = Depends(get_project_repository),
+    workspace_repo: WorkspaceRepository = Depends(get_workspace_repository),
+) -> LabelService:
+    return LabelService(label_repo, project_repo, workspace_repo)
+
+
 def get_task_service(
     task_repo: TaskRepository = Depends(get_task_repository),
     project_repo: ProjectRepository = Depends(get_project_repository),
@@ -105,6 +129,26 @@ def get_task_service(
         project_repo,
         workspace_repo,
         user_repo,
+        task_cache,
+        post_commit,
+    )
+
+
+def get_task_label_service(
+    task_label_repo: TaskLabelRepository = Depends(get_task_label_repository),
+    task_repo: TaskRepository = Depends(get_task_repository),
+    label_repo: LabelRepository = Depends(get_label_repository),
+    project_repo: ProjectRepository = Depends(get_project_repository),
+    workspace_repo: WorkspaceRepository = Depends(get_workspace_repository),
+    task_cache: RedisTaskListCache = Depends(get_task_list_cache),
+    post_commit: PostCommitActions = Depends(get_post_commit_actions),
+) -> TaskLabelService:
+    return TaskLabelService(
+        task_label_repo,
+        task_repo,
+        label_repo,
+        project_repo,
+        workspace_repo,
         task_cache,
         post_commit,
     )

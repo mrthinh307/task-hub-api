@@ -2,10 +2,10 @@ import uuid
 from datetime import datetime
 from typing import TYPE_CHECKING
 
-from sqlalchemy import DateTime, ForeignKey, Index, String, Text
+from sqlalchemy import DateTime, ForeignKey, Index, String, Text, UniqueConstraint
 from sqlalchemy import Enum as SQLEnum
 from sqlalchemy.dialects.postgresql import UUID as PG_UUID
-from sqlalchemy.orm import Mapped, mapped_column, relationship
+from sqlalchemy.orm import Mapped, mapped_column, relationship, validates
 
 from app.core.enums import TaskPriority, TaskStatus
 from app.db.base import Base
@@ -19,6 +19,13 @@ if TYPE_CHECKING:
 
 class TaskLabel(Base):
     __tablename__ = "task_labels"
+    __table_args__ = (
+        UniqueConstraint(
+            "task_id",
+            "label_id",
+            name="uq_task_labels_task_label",
+        ),
+    )
 
     task_id: Mapped[uuid.UUID] = mapped_column(
         PG_UUID(as_uuid=True),
@@ -85,3 +92,13 @@ class Task(Base):
     comments: Mapped[list["Comment"]] = relationship(
         "Comment", back_populates="task", cascade="all, delete-orphan"
     )
+
+    @validates("labels")
+    def _validate_label_project(self, _: str, label: "Label") -> "Label":
+        if (
+            self.project_id is not None
+            and label.project_id is not None
+            and self.project_id != label.project_id
+        ):
+            raise ValueError("Task and label must belong to the same project")
+        return label

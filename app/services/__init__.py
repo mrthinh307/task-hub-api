@@ -2,6 +2,7 @@ from app.services.auth_service import AuthService
 from app.services.comment_service import CommentService
 from app.services.label_service import LabelService
 from app.services.project_service import ProjectService
+from app.services.task_label_service import TaskLabelService
 from app.services.task_service import TaskService
 from app.services.user_service import UserService
 from app.services.workspace_membership_service import WorkspaceMembershipService
@@ -12,6 +13,7 @@ __all__ = [
     "CommentService",
     "LabelService",
     "ProjectService",
+    "TaskLabelService",
     "TaskService",
     "UserService",
     "WorkspaceMembershipService",

@@ -59,6 +59,17 @@ class ArchivedProjectError(ConflictError):
         )
 
 
+class ArchivedLabelMutationError(ConflictError):
+    def __init__(self, project_id: Any, action: str) -> None:
+        super().__init__(
+            message=f"Labels in archived projects cannot be {action}",
+            details={
+                "project_id": str(project_id),
+                "action": action,
+            },
+        )
+
+
 class ArchivedTaskUpdateError(ConflictError):
     def __init__(self, project_id: Any, task_id: Any) -> None:
         super().__init__(
@@ -102,6 +113,25 @@ class TaskAssigneeNotWorkspaceMemberError(ConflictError):
                 "project_id": str(project_id),
                 "workspace_id": str(workspace_id),
                 "user_id": str(user_id),
+            },
+        )
+
+
+class TaskLabelProjectMismatchError(ConflictError):
+    def __init__(
+        self,
+        task_id: Any,
+        label_id: Any,
+        task_project_id: Any,
+        label_project_id: Any,
+    ) -> None:
+        super().__init__(
+            message="Task and label must belong to the same project",
+            details={
+                "task_id": str(task_id),
+                "label_id": str(label_id),
+                "task_project_id": str(task_project_id),
+                "label_project_id": str(label_project_id),
             },
         )
 
