@@ -30,7 +30,14 @@ class GmailAssignmentNotifier:
         notification: TaskAssignmentNotification,
     ) -> None:
         message = self._build_message(notification)
-        await asyncio.to_thread(self._send_message, message)
+        send_task = asyncio.create_task(
+            asyncio.to_thread(self._send_message, message)
+        )
+        try:
+            await asyncio.shield(send_task)
+        except asyncio.CancelledError:
+            await asyncio.gather(send_task, return_exceptions=True)
+            raise
 
     def _build_message(self, notification: TaskAssignmentNotification) -> EmailMessage:
         due_date = (

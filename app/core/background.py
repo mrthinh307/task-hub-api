@@ -28,6 +28,7 @@ class BackgroundTaskDispatcher:
             logger.exception("Background task failed.")
 
     async def shutdown(self, timeout_seconds: float) -> None:
+        """Wait for the grace period, then cancel and drain remaining callbacks."""
         self._accepting_tasks = False
         tasks = set(self._tasks)
         if not tasks:
@@ -41,6 +42,12 @@ class BackgroundTaskDispatcher:
             "Cancelling %d background task(s) after shutdown timeout.",
             len(pending),
         )
-        for task in pending:
+        await self._cancel_and_drain(pending)
+
+    @staticmethod
+    async def _cancel_and_drain(tasks: set[asyncio.Task[None]]) -> None:
+        for task in tasks:
             task.cancel()
-        await asyncio.gather(*pending, return_exceptions=True)
+        # Cancellation is cooperative. Drain callbacks that are finishing
+        # non-cancellable work, such as an in-flight thread-based SMTP send.
+        await asyncio.gather(*tasks, return_exceptions=True)
