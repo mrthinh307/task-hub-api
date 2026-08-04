@@ -1,3 +1,4 @@
+from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
 from uuid import UUID, uuid4
 
@@ -25,6 +26,7 @@ from app.models.project import Project
 from app.models.task import Task
 from app.models.user import User
 from app.models.workspace import Workspace
+from app.notifications import TaskAssignmentNotification
 from app.repositories.task_repository import (
     TaskCreateData,
     TaskFilterData,
@@ -176,6 +178,30 @@ class FakeTaskListCache:
         self.invalidate_calls.append(project_id)
 
 
+class FakeAssignmentNotifier:
+    def __init__(self) -> None:
+        self.notifications: list[TaskAssignmentNotification] = []
+
+    async def notify_task_assigned(
+        self,
+        notification: TaskAssignmentNotification,
+    ) -> None:
+        self.notifications.append(notification)
+
+
+class FakeBackgroundTaskDispatcher:
+    def __init__(self) -> None:
+        self.callbacks: list[Callable[[], Awaitable[None]]] = []
+
+    def submit(self, callback: Callable[[], Awaitable[None]]) -> None:
+        self.callbacks.append(callback)
+
+    async def run(self) -> None:
+        callbacks, self.callbacks = self.callbacks, []
+        for callback in callbacks:
+            await callback()
+
+
 def make_user(*, active: bool = True) -> User:
     return User(
         id=uuid4(),
@@ -244,6 +270,8 @@ def make_service() -> tuple[
     workspace_repo = FakeWorkspaceRepository()
     user_repo = FakeUserRepository()
     task_cache = FakeTaskListCache()
+    assignment_notifier = FakeAssignmentNotifier()
+    background_dispatcher = FakeBackgroundTaskDispatcher()
     service = TaskService(
         task_repo,  # type: ignore[arg-type]
         project_repo,  # type: ignore[arg-type]
@@ -251,6 +279,8 @@ def make_service() -> tuple[
         user_repo,  # type: ignore[arg-type]
         task_cache,
         PostCommitActions(),
+        assignment_notifier,
+        background_dispatcher,  # type: ignore[arg-type]
     )
     return service, task_repo, project_repo, workspace_repo, user_repo
 
@@ -323,6 +353,10 @@ async def test_create_task_allows_self_assignment_without_extra_lookup() -> None
     assert task_repo.create_calls[0].assignee_id == current_user.id
     assert user_repo.get_calls == []
     assert workspace_repo.get_calls == [(workspace.id, current_user.id)]
+    await service.post_commit.run()
+    dispatcher = service.background_dispatcher
+    assert isinstance(dispatcher, FakeBackgroundTaskDispatcher)
+    assert dispatcher.callbacks == []
 
 
 @pytest.mark.asyncio
@@ -370,7 +404,7 @@ async def test_create_task_allows_active_workspace_member_as_assignee() -> None:
         role=WorkspaceAccessRole.VIEWER,
     )
 
-    await service.create_task(
+    task = await service.create_task(
         project.id,
         current_user,
         TaskCreate(title="Assigned task", assignee_id=assignee.id),
@@ -381,6 +415,31 @@ async def test_create_task_allows_active_workspace_member_as_assignee() -> None:
     assert workspace_repo.get_calls == [
         (workspace.id, current_user.id),
         (workspace.id, assignee.id),
+    ]
+    notifier = service.assignment_notifier
+    dispatcher = service.background_dispatcher
+    assert isinstance(notifier, FakeAssignmentNotifier)
+    assert isinstance(dispatcher, FakeBackgroundTaskDispatcher)
+    assert notifier.notifications == []
+    assert dispatcher.callbacks == []
+
+    await service.post_commit.run()
+
+    assert notifier.notifications == []
+    assert len(dispatcher.callbacks) == 1
+
+    await dispatcher.run()
+
+    assert notifier.notifications == [
+        TaskAssignmentNotification(
+            task_id=task.id,
+            task_title="Assigned task",
+            project_name=project.name,
+            assignee_email=assignee.email,
+            assignee_name=assignee.full_name,
+            assigned_by_name=current_user.full_name,
+            due_date=None,
+        )
     ]
 
 
@@ -737,6 +796,112 @@ async def test_update_task_allows_active_workspace_member_as_assignee() -> None:
         (workspace.id, current_user.id),
         (workspace.id, assignee.id),
     ]
+    notifier = service.assignment_notifier
+    dispatcher = service.background_dispatcher
+    assert isinstance(notifier, FakeAssignmentNotifier)
+    assert isinstance(dispatcher, FakeBackgroundTaskDispatcher)
+    assert notifier.notifications == []
+
+    await service.post_commit.run()
+    await dispatcher.run()
+
+    assert notifier.notifications == [
+        TaskAssignmentNotification(
+            task_id=task.id,
+            task_title=task.title,
+            project_name=project.name,
+            assignee_email=assignee.email,
+            assignee_name=assignee.full_name,
+            assigned_by_name=current_user.full_name,
+            due_date=task.due_date,
+        )
+    ]
+
+
+@pytest.mark.asyncio
+async def test_update_task_does_not_notify_when_assignee_is_unchanged() -> None:
+    service, task_repo, project_repo, workspace_repo, user_repo = make_service()
+    current_user = make_user()
+    assignee = make_user()
+    workspace = make_workspace(owner_id=current_user.id)
+    project = make_project(workspace.id)
+    task = make_task(project.id, current_user.id)
+    task.assignee_id = assignee.id
+    task_repo.tasks[task.id] = task
+    project_repo.projects[project.id] = project
+    user_repo.users[assignee.id] = assignee
+    workspace_repo.access_by_user[current_user.id] = WorkspaceAccess(
+        workspace=workspace,
+        role=WorkspaceAccessRole.OWNER,
+    )
+    workspace_repo.access_by_user[assignee.id] = WorkspaceAccess(
+        workspace=workspace,
+        role=WorkspaceAccessRole.VIEWER,
+    )
+
+    await service.update_task(
+        task.id,
+        current_user,
+        TaskUpdate(assignee_id=assignee.id),
+    )
+    await service.post_commit.run()
+
+    dispatcher = service.background_dispatcher
+    assert isinstance(dispatcher, FakeBackgroundTaskDispatcher)
+    assert dispatcher.callbacks == []
+
+
+@pytest.mark.asyncio
+async def test_update_task_does_not_notify_when_task_is_unassigned() -> None:
+    service, task_repo, project_repo, workspace_repo, _ = make_service()
+    current_user = make_user()
+    workspace = make_workspace(owner_id=current_user.id)
+    project = make_project(workspace.id)
+    task = make_task(project.id, current_user.id)
+    task_repo.tasks[task.id] = task
+    project_repo.projects[project.id] = project
+    workspace_repo.access_by_user[current_user.id] = WorkspaceAccess(
+        workspace=workspace,
+        role=WorkspaceAccessRole.OWNER,
+    )
+
+    await service.update_task(
+        task.id,
+        current_user,
+        TaskUpdate(assignee_id=None),
+    )
+    await service.post_commit.run()
+
+    dispatcher = service.background_dispatcher
+    assert isinstance(dispatcher, FakeBackgroundTaskDispatcher)
+    assert dispatcher.callbacks == []
+
+
+@pytest.mark.asyncio
+async def test_update_task_does_not_notify_on_self_assignment() -> None:
+    service, task_repo, project_repo, workspace_repo, user_repo = make_service()
+    current_user = make_user()
+    workspace = make_workspace(owner_id=current_user.id)
+    project = make_project(workspace.id)
+    task = make_task(project.id, current_user.id)
+    task_repo.tasks[task.id] = task
+    project_repo.projects[project.id] = project
+    workspace_repo.access_by_user[current_user.id] = WorkspaceAccess(
+        workspace=workspace,
+        role=WorkspaceAccessRole.OWNER,
+    )
+
+    await service.update_task(
+        task.id,
+        current_user,
+        TaskUpdate(assignee_id=current_user.id),
+    )
+    await service.post_commit.run()
+
+    dispatcher = service.background_dispatcher
+    assert isinstance(dispatcher, FakeBackgroundTaskDispatcher)
+    assert dispatcher.callbacks == []
+    assert user_repo.get_calls == []
 
 
 @pytest.mark.parametrize(
