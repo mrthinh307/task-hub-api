@@ -1,7 +1,7 @@
 from typing import Literal
 from urllib.parse import parse_qs, urlencode, urlparse, urlunparse
 
-from pydantic import Field, field_validator
+from pydantic import EmailStr, Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -19,6 +19,18 @@ class Settings(BaseSettings):
     REDIS_SOCKET_TIMEOUT: float = 5.0
     REDIS_HEALTH_CHECK_INTERVAL: int = 30
     TASK_LIST_CACHE_TTL_SECONDS: int = Field(default=60, ge=1, le=3600)
+
+    # Gmail notifications
+    EMAIL_NOTIFICATIONS_ENABLED: bool = False
+    GMAIL_SMTP_USERNAME: EmailStr | None = None
+    GMAIL_SMTP_APP_PASSWORD: SecretStr | None = None
+    EMAIL_FROM_NAME: str = "Task Hub"
+    EMAIL_SMTP_TIMEOUT_SECONDS: float = Field(default=10.0, gt=0, le=60)
+    BACKGROUND_TASK_SHUTDOWN_TIMEOUT_SECONDS: float = Field(
+        default=10.0,
+        gt=0,
+        le=60,
+    )
 
     # Security
     SECRET_KEY: str = "dev-secret-key-change-in-production"
@@ -65,6 +77,18 @@ class Settings(BaseSettings):
                     )
                 )
         return v
+
+    @model_validator(mode="after")
+    def validate_gmail_configuration(self) -> "Settings":
+        if self.EMAIL_NOTIFICATIONS_ENABLED and (
+            self.GMAIL_SMTP_USERNAME is None
+            or self.GMAIL_SMTP_APP_PASSWORD is None
+        ):
+            raise ValueError(
+                "GMAIL_SMTP_USERNAME and GMAIL_SMTP_APP_PASSWORD are required "
+                "when email notifications are enabled"
+            )
+        return self
 
     model_config = SettingsConfigDict(
         env_file=".env",

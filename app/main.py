@@ -5,6 +5,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.exception_handlers import register_exception_handlers
 from app.api.v1.api import api_router
+from app.core.background import BackgroundTaskDispatcher
 from app.core.config import settings
 from app.core.logging import logger
 from app.db.session import close_redis, init_redis
@@ -28,6 +29,9 @@ async def lifespan(app: FastAPI):
 
     # 2. SHUTDOWN: Gracefully clean up resources and close connections
     logger.info(f"Shutting down {settings.PROJECT_NAME}...")
+    await app.state.background_dispatcher.shutdown(
+        settings.BACKGROUND_TASK_SHUTDOWN_TIMEOUT_SECONDS
+    )
     await close_redis()
 
 
@@ -50,6 +54,7 @@ def create_app() -> FastAPI:
         redoc_url="/redoc",
         lifespan=lifespan,
     )
+    app.state.background_dispatcher = BackgroundTaskDispatcher()
 
     # Configure CORS (Cross-Origin Resource Sharing) Middleware
     # Allows cross-origin requests from frontend applications
