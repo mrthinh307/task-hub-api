@@ -2,11 +2,8 @@ from functools import partial
 from uuid import UUID
 
 from app.cache.task_list_cache import TaskListCache
-from app.core.enums import (
-    ProjectStatus,
-    TaskStatus,
-    WorkspaceAccessRole,
-)
+from app.core.background import BackgroundTaskDispatcher
+from app.core.enums import ProjectStatus, TaskStatus, WorkspaceAccessRole
 from app.core.exceptions import (
     ArchivedProjectError,
     ArchivedTaskDeleteError,
@@ -20,6 +17,7 @@ from app.db.post_commit import PostCommitActions
 from app.models.project import Project
 from app.models.task import Task
 from app.models.user import User
+from app.notifications import AssignmentNotifier, TaskAssignmentNotification
 from app.repositories.project_repository import ProjectRepository
 from app.repositories.task_repository import (
     TaskCreateData,
@@ -47,6 +45,8 @@ class TaskService:
         user_repo: UserRepository,
         task_cache: TaskListCache,
         post_commit: PostCommitActions,
+        assignment_notifier: AssignmentNotifier,
+        background_dispatcher: BackgroundTaskDispatcher,
     ) -> None:
         self.task_repo = task_repo
         self.project_repo = project_repo
@@ -54,6 +54,8 @@ class TaskService:
         self.user_repo = user_repo
         self.task_cache = task_cache
         self.post_commit = post_commit
+        self.assignment_notifier = assignment_notifier
+        self.background_dispatcher = background_dispatcher
 
     async def _get_project_access(
         self,
@@ -95,9 +97,11 @@ class TaskService:
         project: Project,
         current_user: User,
         assignee_id: UUID | None,
-    ) -> None:
-        if assignee_id is None or assignee_id == current_user.id:
-            return
+    ) -> User | None:
+        if assignee_id is None:
+            return None
+        if assignee_id == current_user.id:
+            return current_user
 
         assignee = await self.user_repo.get_by_id(assignee_id)
         if assignee is None:
@@ -115,6 +119,42 @@ class TaskService:
                 project.workspace_id,
                 assignee_id,
             )
+        return assignee
+
+    async def _dispatch_assignment_notification(
+        self,
+        notification: TaskAssignmentNotification,
+    ) -> None:
+        self.background_dispatcher.submit(
+            partial(
+                self.assignment_notifier.notify_task_assigned,
+                notification,
+            )
+        )
+
+    def _register_assignment_notification(
+        self,
+        *,
+        task: Task,
+        project: Project,
+        assignee: User | None,
+        assigned_by: User,
+    ) -> None:
+        if assignee is None or assignee.id == assigned_by.id:
+            return
+
+        notification = TaskAssignmentNotification(
+            task_id=task.id,
+            task_title=task.title,
+            project_name=project.name,
+            assignee_email=assignee.email,
+            assignee_name=assignee.full_name,
+            assigned_by_name=assigned_by.full_name,
+            due_date=task.due_date,
+        )
+        self.post_commit.add(
+            partial(self._dispatch_assignment_notification, notification)
+        )
 
     async def create_task(
         self,
@@ -144,7 +184,11 @@ class TaskService:
             raise ArchivedProjectError(project_id)
 
         assignee_id = payload.assignee_id
-        await self._validate_assignee(project, current_user, assignee_id)
+        assignee = await self._validate_assignee(
+            project,
+            current_user,
+            assignee_id,
+        )
 
         task = await self.task_repo.create(
             TaskCreateData(
@@ -159,6 +203,12 @@ class TaskService:
             )
         )
         self.post_commit.add(partial(self.task_cache.invalidate_project, project_id))
+        self._register_assignment_notification(
+            task=task,
+            project=project,
+            assignee=assignee,
+            assigned_by=current_user,
+        )
         return task
 
     async def update_task(
@@ -189,8 +239,10 @@ class TaskService:
             raise ArchivedTaskUpdateError(project.id, task_id)
 
         update_data = payload.model_dump(exclude_unset=True)
+        previous_assignee_id = task.assignee_id
+        assignee: User | None = None
         if "assignee_id" in update_data:
-            await self._validate_assignee(
+            assignee = await self._validate_assignee(
                 project,
                 current_user,
                 payload.assignee_id,
@@ -201,6 +253,13 @@ class TaskService:
             TaskUpdateData(**update_data),
         )
         self.post_commit.add(partial(self.task_cache.invalidate_project, project.id))
+        if updated_task.assignee_id != previous_assignee_id:
+            self._register_assignment_notification(
+                task=updated_task,
+                project=project,
+                assignee=assignee,
+                assigned_by=current_user,
+            )
         return updated_task
 
     async def delete_task(

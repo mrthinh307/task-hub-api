@@ -3,6 +3,7 @@ from fastapi import Depends, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.cache.task_list_cache import RedisTaskListCache
+from app.core.background import BackgroundTaskDispatcher
 from app.core.config import settings
 from app.core.enums import TokenType
 from app.core.exceptions import InactiveUserError, InvalidTokenError
@@ -10,6 +11,11 @@ from app.core.security import decode_token
 from app.db.post_commit import PostCommitActions, get_post_commit_actions
 from app.db.session import get_db, get_redis
 from app.models.user import User
+from app.notifications import (
+    AssignmentNotifier,
+    GmailAssignmentNotifier,
+    NoOpAssignmentNotifier,
+)
 from app.repositories.auth_repository import AuthRepository
 from app.repositories.comment_repository import CommentRepository
 from app.repositories.label_repository import LabelRepository
@@ -109,6 +115,26 @@ def get_task_list_cache(
     )
 
 
+def get_assignment_notifier() -> AssignmentNotifier:
+    if not settings.EMAIL_NOTIFICATIONS_ENABLED:
+        return NoOpAssignmentNotifier()
+
+    username = settings.GMAIL_SMTP_USERNAME
+    app_password = settings.GMAIL_SMTP_APP_PASSWORD
+    if username is None or app_password is None:
+        raise RuntimeError("Gmail SMTP settings are incomplete")
+    return GmailAssignmentNotifier(
+        username=str(username),
+        app_password=app_password.get_secret_value(),
+        from_name=settings.EMAIL_FROM_NAME,
+        timeout_seconds=settings.EMAIL_SMTP_TIMEOUT_SECONDS,
+    )
+
+
+def get_background_task_dispatcher(request: Request) -> BackgroundTaskDispatcher:
+    return request.app.state.background_dispatcher
+
+
 def get_project_service(
     project_repo: ProjectRepository = Depends(get_project_repository),
     workspace_repo: WorkspaceRepository = Depends(get_workspace_repository),
@@ -131,6 +157,10 @@ def get_task_service(
     user_repo: UserRepository = Depends(get_user_repository),
     task_cache: RedisTaskListCache = Depends(get_task_list_cache),
     post_commit: PostCommitActions = Depends(get_post_commit_actions),
+    assignment_notifier: AssignmentNotifier = Depends(get_assignment_notifier),
+    background_dispatcher: BackgroundTaskDispatcher = Depends(
+        get_background_task_dispatcher
+    ),
 ) -> TaskService:
     return TaskService(
         task_repo,
@@ -139,6 +169,8 @@ def get_task_service(
         user_repo,
         task_cache,
         post_commit,
+        assignment_notifier,
+        background_dispatcher,
     )
 
 
